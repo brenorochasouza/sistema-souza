@@ -1,7 +1,7 @@
 {
   "name": "Souza Engenharia",
   "short_name": "Souza",
-  "description": "Sistema interno da Souza Engenharia: agenda, clientes e obras.",
+  "description": "Sistema interno da Souza Engenharia: agenda, clientes, orçamentos e obras.",
   "lang": "pt-BR",
   "start_url": "./#/inicio",
   "scope": "./",

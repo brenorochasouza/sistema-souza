@@ -132,7 +132,7 @@
           <p class="small muted">Tudo fica guardado no aparelho e no Supabase. Sem internet, o que você lança fica na fila e sobe sozinho quando a conexão volta.</p>
           <div class="actions"><button class="btn primary" data-a="cfg-sync">${icone('nuvem')}Sincronizar agora</button><button class="btn" data-a="cfg-sair">${icone('sair')}Sair da conta</button></div>
         </div></div>
-        <div class="card"><div class="hd"><div><h3>Backup</h3><p>Agenda, clientes e obras num arquivo só.</p></div></div><div class="bd">
+        <div class="card"><div class="hd"><div><h3>Backup</h3><p>Agenda, clientes, orçamentos e obras num arquivo só.</p></div></div><div class="bd">
           ${FS_OK && !celular ? `<dl class="kv"><dt>Pasta</dt><dd>${B.pasta ? `<b>${esc(B.pasta.name)}</b>` : 'Não escolhida'}</dd><dt>Último backup</dt><dd>${B.ultimo ? B.ultimo.toLocaleString('pt-BR') : '-'}</dd>
             ${B.status === 'permissao' ? '<dt>Situação</dt><dd>Aguardando você liberar a pasta nesta sessão</dd>' : ''}</dl>
             <p class="small muted">Escolha a pasta do Google Drive no computador. O sistema grava uma cópia ao abrir e a cada 30 minutos, com histórico diário dos últimos ${MAX_HIST} dias.</p>
@@ -151,6 +151,7 @@
           <p class="small muted">Fica guardada só neste aparelho, nunca no código do site.</p>
           <div class="actions"><button class="btn primary" data-a="cfg-ia-salvar">Salvar chave</button>${chave ? '<button class="btn" data-a="cfg-ia-remover">Remover</button>' : ''}</div>
         </div></div>
+        ${Sis.orcamentosConfig ? Sis.orcamentosConfig.card() : ''}
         ${obras ? obras.cardCategorias() + obras.cardEmpresa() : ''}
         <p class="tiny muted">Sistema Souza Engenharia, versão ${esc(Sis.VERSAO)}</p>
       </div>

@@ -6,8 +6,8 @@
    cadastro único de clientes usado por todos os módulos.
    ========================================================= */
 window.Sis = (function () {
-  const VERSAO = '1.0.1';
-  const TABELAS = ['clientes', 'comercial', 'agenda', 'obras'];
+  const VERSAO = '1.1.0';
+  const TABELAS = ['clientes', 'comercial', 'agenda', 'obras', 'orcamentos'];
 
   /* ---------------- utilidades ---------------- */
   const $ = (s, r = document) => r.querySelector(s);
@@ -206,10 +206,13 @@ window.Sis = (function () {
   };
 
   /* ---------------- Supabase: configuração e login ---------------- */
-  const S = { sb: null, sessao: null, sessaoExpirada: false, online: navigator.onLine, sincronizando: false, deNovo: false, ultimaSync: null, erroSync: null };
+  const S = { sb: null, sessao: null, sessaoExpirada: false, online: navigator.onLine, sincronizando: false, deNovo: false, ultimaSync: null, erroSync: null, ausentes: new Set() };
   const sbUrl = (p) => S.sb.url.replace(/\/+$/, '') + p;
   class ErroSb extends Error { constructor(m, status) { super(m); this.status = status; } }
   const semConexao = (e) => e instanceof TypeError || (e && /Failed to fetch|NetworkError|Load failed/i.test(e.message || ''));
+  /* Tabela de um módulo novo que ainda não foi criada no Supabase: os dados ficam no
+     aparelho e a sincronização dos outros módulos segue normalmente. */
+  const tabelaAusente = (e) => !semConexao(e) && (e.status === 404 || /Tabela inv[aá]lida|Could not find the table|does not exist|schema cache/i.test(e.message || ''));
 
   async function sbFetch(caminho, { method = 'GET', body, auth = true, tentativa = 0 } = {}) {
     const h = { apikey: S.sb.chave, 'Content-Type': 'application/json' };
@@ -311,11 +314,13 @@ window.Sis = (function () {
       if (!S.online || !navigator.onLine) return { cls: 'offline', txt: n ? `Sem internet, ${alt(n)} no aparelho` : 'Sem internet, dados salvos no aparelho', curto: 'Sem internet' };
       if (S.sincronizando) return { cls: 'pendente', txt: 'Sincronizando…', curto: 'Sincronizando…' };
       if (S.erroSync) return { cls: 'erro', txt: 'Erro ao sincronizar, tentar de novo', curto: 'Erro', title: S.erroSync, acao: 'sync' };
+      if (S.ausentes.size) return { cls: 'pendente', txt: `Falta criar no Supabase: ${[...S.ausentes].join(', ')}`, curto: 'Tabela pendente', title: 'Rode o script da tabela no SQL Editor do Supabase. Os dados estão guardados no aparelho.', acao: 'sync' };
       if (n) return { cls: 'pendente', txt: `${alt(n)} aguardando envio`, curto: `${n} aguardando`, acao: 'sync' };
       const h = S.ultimaSync ? S.ultimaSync.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
       return { cls: 'ok', txt: h ? `Sincronizado às ${h}` : 'Sincronizado', curto: 'Sincronizado', acao: 'sync' };
     },
-    info: () => ({ ultima: S.ultimaSync, erro: S.erroSync, pendentes: pend.size, online: S.online, url: S.sb && S.sb.url, email: S.sessao && S.sessao.user && S.sessao.user.email }),
+    info: () => ({ ultima: S.ultimaSync, erro: S.erroSync, pendentes: pend.size, online: S.online, url: S.sb && S.sb.url, email: S.sessao && S.sessao.user && S.sessao.user.email, ausentes: [...S.ausentes] }),
+    ausentes: () => S.ausentes,
   };
   async function enviarPendentes() {
     for (const t of TABELAS) {
@@ -324,7 +329,8 @@ window.Sis = (function () {
         const lote = ids.slice(i, i + 200).map((id) => mapas[t].get(id)).filter(Boolean)
           .map((r) => ({ id: r.id, tipo: r.tipo, grupo: r.grupo, dados: r.dados, atualizado_em: r.atualizado_em, excluido: !!r.excluido }));
         if (!lote.length) continue;
-        await sbFetch('/rest/v1/rpc/sincronizar_lote', { method: 'POST', body: { p_tabela: t, p_lote: lote } });
+        try { await sbFetch('/rest/v1/rpc/sincronizar_lote', { method: 'POST', body: { p_tabela: t, p_lote: lote } }); }
+        catch (e) { if (tabelaAusente(e)) { S.ausentes.add(t); break; } throw e; }
         const enviados = [];
         for (const x of lote) { const k = t + '|' + x.id; if (pend.get(k) === x.atualizado_em) { pend.delete(k); enviados.push(k); } }
         await idbOp('pend', 'readwrite', (s) => { enviados.forEach((k) => s.delete(k)); });
@@ -334,6 +340,13 @@ window.Sis = (function () {
   async function baixarAlteracoes() {
     const mudou = new Set();
     for (const t of TABELAS) {
+      try { await baixarTabela(t, mudou); S.ausentes.delete(t); }
+      catch (e) { if (tabelaAusente(e)) S.ausentes.add(t); else throw e; }
+    }
+    return mudou;
+  }
+  async function baixarTabela(t, mudou) {
+    {
       let cursor = (await kv.get('cursor:' + t)) || null;
       let desde = cursor ? new Date(Date.parse(cursor) - 120000).toISOString() : '1970-01-01T00:00:00Z';
       let maior = cursor;
@@ -363,7 +376,6 @@ window.Sis = (function () {
       }
       if (maior && maior !== cursor) await kv.set('cursor:' + t, maior);
     }
-    return mudou;
   }
   window.addEventListener('online', () => { S.online = true; sync.agora(); });
   window.addEventListener('offline', () => { S.online = false; atualizarIndicador(); });
@@ -684,7 +696,7 @@ window.Sis = (function () {
     const barra = naBarra();
     app.innerHTML = `<div class="shell">
       <aside class="lateral">
-        <a class="lat-logo" href="#/inicio"><img src="img/logo.png?v=1.0.1" alt="Souza Engenharia"></a>
+        <a class="lat-logo" href="#/inicio"><img src="img/logo.png?v=${VERSAO}" alt="Souza Engenharia"></a>
         <nav class="lat-nav" aria-label="Sistemas">
           <a href="#/inicio" data-nav="inicio">${icone('inicio')}<span>Início</span></a>
           ${sistemas.map((m) => `<a href="#/${m.id}" data-nav="${m.id}">${icone(m.icone)}<span>${esc(m.nome)}</span></a>`).join('')}
@@ -697,7 +709,7 @@ window.Sis = (function () {
         </div>
       </aside>
       <header class="topo-cel">
-        <a href="#/inicio" class="topo-logo"><img src="img/logo.png?v=1.0.1" alt="Souza Engenharia"></a>
+        <a href="#/inicio" class="topo-logo"><img src="img/logo.png?v=${VERSAO}" alt="Souza Engenharia"></a>
         <div class="topo-acoes"><button class="btn icon" data-a="sis-busca" aria-label="Buscar">${icone('busca')}</button><button data-sync="ponto" type="button" aria-label="Sincronização"></button></div>
       </header>
       <main id="conteudo" tabindex="-1"></main>
@@ -783,7 +795,7 @@ window.Sis = (function () {
   function telaLogin(msgErro = '') {
     const precisaProjeto = !S.sb;
     $('#app').innerHTML = `<div class="login"><div class="login-box">
-      <img src="img/logo.png?v=1.0.1" alt="Souza Engenharia" class="login-logo">
+      <img src="img/logo.png?v=${VERSAO}" alt="Souza Engenharia" class="login-logo">
       <form class="card" id="form-login" onsubmit="return false"><div class="bd">
         <h1>Entrar</h1>
         <p class="muted small">${precisaProjeto ? 'Primeiro acesso neste aparelho: informe o projeto do Supabase e o seu login.' : 'Use o seu e-mail e senha. Depois do primeiro acesso, o aparelho continua conectado.'}</p>
