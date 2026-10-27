@@ -6,7 +6,7 @@
    cadastro único de clientes usado por todos os módulos.
    ========================================================= */
 window.Sis = (function () {
-  const VERSAO = '1.1.0';
+  const VERSAO = '1.1.1';
   const TABELAS = ['clientes', 'comercial', 'agenda', 'obras', 'orcamentos'];
 
   /* ---------------- utilidades ---------------- */

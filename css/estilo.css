@@ -814,6 +814,7 @@ details.dt[open]>summary::after{content:"\2212"}
 .o-tab col.c-n{width:78px}.o-tab col.c-u{width:66px}.o-tab col.c-q{width:94px}.o-tab col.c-v{width:106px}.o-tab col.c-pu{width:100px}.o-tab col.c-t{width:124px}.o-tab col.c-m{width:40px}
 .o-tab thead th{position:sticky;top:0;z-index:6;background:var(--surface-2);font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 .o-tab thead th.num{text-align:right;padding-right:12px}
+.o-tab thead th.c{text-align:center}
 .o-tab thead th:first-child{border-top-left-radius:var(--radius);padding-left:14px}
 .o-tab thead th:last-child{border-top-right-radius:var(--radius)}
 .o-tab td{padding:3px 4px;border-bottom:1px solid var(--line-3);vertical-align:top;background:#fff}

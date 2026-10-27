@@ -545,8 +545,8 @@
   }
 
   function planilhaPC(o, c) {
-    let h = `<table class="o-tab"><colgroup><col class="c-n"><col class="c-d"><col class="c-u"><col class="c-q"><col class="c-v"><col class="c-v"><col class="c-pu"><col class="c-t"><col class="c-m"></colgroup>
-      <thead><tr><th>Item</th><th>Descrição dos serviços</th><th>Unid.</th><th class="num">Quant.</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Preço unit.</th><th class="num">Total (R$)</th><th><span class="sr">Opções</span></th></tr></thead>`;
+    let h = `<table class="o-tab"><colgroup><col class="c-n"><col class="c-d"><col class="c-q"><col class="c-u"><col class="c-v"><col class="c-v"><col class="c-pu"><col class="c-t"><col class="c-m"></colgroup>
+      <thead><tr><th>Item</th><th>Descrição dos serviços</th><th class="num">Quant.</th><th class="c">Unid.</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Preço unit.</th><th class="num">Total (R$)</th><th><span class="sr">Opções</span></th></tr></thead>`;
     o.etapas.forEach((e, i) => { h += tbodyEtapa(e, i, c); });
     return h + `</table><button class="o-add-et" data-a="orc-add-etapa">${icone('mais')}Nova etapa</button>`;
   }
@@ -573,7 +573,7 @@
     let h = `<tr class="${cls}" data-l="${l.id}"><td class="o-n">${num}</td>
       <td class="o-dc"><div class="sugere"><textarea class="o-in o-desc o-auto" data-f="desc" rows="1" placeholder="${g ? 'Descrição do item' : 'Descrição do serviço'}">${esc(l.desc)}</textarea><div class="lista-sug o-sugs" hidden></div></div></td>`;
     if (g) h += `<td colspan="4" class="o-gcel"><span class="o-gdet" data-g="${l.id}">${l.sub.length} ${l.sub.length === 1 ? 'subitem' : 'subitens'}</span><button class="o-addb" data-a="orc-add-sub" data-l="${l.id}">${icone('mais')}Subitem</button></td><td class="o-pu"></td>`;
-    else h += `<td class="o-c"><input class="o-in o-un" data-f="un" list="orc-uns" autocomplete="off" value="${esc(l.un)}" aria-label="Unidade"></td>${inpN('qtd', fq)}${inpN('mat', fv)}${inpN('mdo', fv)}<td class="num o-pu" data-u="${l.id}">${r.unit == null ? '' : fv(r.unit)}</td>`;
+    else h += `${inpN('qtd', fq)}<td class="o-c"><input class="o-in o-un" data-f="un" list="orc-uns" autocomplete="off" value="${esc(l.un)}" aria-label="Unidade"></td>${inpN('mat', fv)}${inpN('mdo', fv)}<td class="num o-pu" data-u="${l.id}">${r.unit == null ? '' : fv(r.unit)}</td>`;
     h += `<td class="num o-tot" data-t="${l.id}">${totHTML(r)}</td>
       <td class="o-ac"><button class="btn icon o-mn" data-a="orc-menu" data-k="${nivel}" data-l="${l.id}" aria-label="Opções do item ${num}">${icone('pontos')}</button></td></tr>`;
     if (l.obs != null) {
@@ -1045,8 +1045,8 @@
       corpo: `<label class="f req"><span>Descrição${grp ? ' do item' : ' do serviço'}</span><div class="sugere"><textarea class="inp" name="desc" rows="3" placeholder="Ex.: Pintura em parede acrílico acetinado">${esc(l.desc)}</textarea><div class="lista-sug" hidden></div></div></label>
         ${grp ? `<p class="small muted o-grp-nota">${icone('info')}Este item é a soma dos ${pos.linha.sub.length} subitens dele. Quantidade e preços ficam nos subitens.</p>` : `
         <div class="grid2 o-mg">
-          <label class="f"><span>Unidade</span><input class="inp" name="un" list="orc-uns" value="${esc(l.un)}" autocomplete="off"></label>
           <label class="f"><span>Quantidade</span><input class="inp money" name="qtd" inputmode="decimal" value="${esc(l.qf || cru(l.qtd))}" autocomplete="off"></label>
+          <label class="f"><span>Unidade</span><input class="inp" name="un" list="orc-uns" value="${esc(l.un)}" autocomplete="off"></label>
           <div class="o-uns span2">${UNIDADES.slice(0, 9).map((u) => `<button type="button" class="o-un-b ${l.un === u ? 'on' : ''}" data-u="${esc(u)}">${esc(u)}</button>`).join('')}</div>
           <label class="f"><span>Material (R$ por unidade)</span><input class="inp money" name="mat" inputmode="decimal" value="${esc(cru(l.mat))}" autocomplete="off"></label>
           <label class="f"><span>Mão de obra (R$ por unidade)</span><input class="inp money" name="mdo" inputmode="decimal" value="${esc(cru(l.mdo))}" autocomplete="off"></label>
@@ -1318,7 +1318,7 @@
           : `<tr class="pe-grp"><td class="c-i">${num}</td><td colspan="4">${esc(l.desc)}</td><td class="num">${tot(r)}</td></tr>`;
       } else {
         const neg = r.neg;
-        h = `<tr class="${sub ? 'pe-sub' : 'pe-it'}"><td class="c-i">${num}</td><td class="pe-d">${esc(l.desc)}</td><td class="c-u">${esc(l.un)}</td><td class="num">${fq(l.qtd)}</td>`
+        h = `<tr class="${sub ? 'pe-sub' : 'pe-it'}"><td class="c-i">${num}</td><td class="pe-d">${esc(l.desc)}</td><td class="num">${fq(l.qtd)}</td><td class="c-u">${esc(l.un)}</td>`
           + (completa ? `<td class="num">${neg ? '' : fv(r.mu)}</td><td class="num">${neg ? '' : fv(r.du)}</td><td class="num">${neg ? '' : fv(r.tm)}</td><td class="num">${neg ? '' : fv(r.td)}</td>` : '')
           + `<td class="num">${neg ? '' : fv(r.unit)}</td><td class="num pe-t">${tot(r)}</td></tr>`;
       }
@@ -1340,8 +1340,8 @@
       corpo += '</tbody>';
     });
     const cab = completa
-      ? '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="c-u">Unid.</th><th class="num c-q">Quant.</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total material</th><th class="num">Total mão de obra</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>'
-      : '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="c-u">Unid.</th><th class="num c-q">Quant.</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>';
+      ? '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num c-q">Quant.</th><th class="c-u">Unid.</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total material</th><th class="num">Total mão de obra</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>'
+      : '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num c-q">Quant.</th><th class="c-u">Unid.</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>';
     const resumo = op.resumo ? `<h2>Resumo por etapa</h2><table class="pe-res"><colgroup><col style="width:6%"><col><col style="width:13%"><col style="width:13%"><col style="width:14%"><col style="width:8%"></colgroup><thead><tr><th class="c-i">Item</th><th>Etapa</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total</th><th class="num">%</th></tr></thead><tbody>
         ${o.etapas.map((et, i) => { const r = V.m.get(et.id); return `<tr><td class="c-i">${i + 1}</td><td>${esc(et.titulo)}</td><td class="num">${fv(r.tm)}</td><td class="num">${fv(r.td)}</td><td class="num">${tot(r)}</td><td class="num">${V.direto && !r.neg ? pct(r.tot / V.direto) : ''}</td></tr>`; }).join('')}</tbody>
         <tfoot>${emb ? '' : `<tr><td></td><td>Custo direto</td><td class="num">${fv(V.tm)}</td><td class="num">${fv(V.td)}</td><td class="num">${fv(V.direto)}</td><td class="num">100%</td></tr>
@@ -1363,7 +1363,7 @@
       </div>
       ${resumo}
       ${op.resumo ? '<h2>Planilha detalhada</h2>' : ''}
-      <table class="pe-tab"><colgroup>${(completa ? [5, 32, 4.5, 6.5, 8.5, 8.5, 9, 9, 8.5, 8.5] : [6, 54, 6, 8, 12, 14]).map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead>${cab}</thead>${corpo}</table>
+      <table class="pe-tab"><colgroup>${(completa ? [5, 32, 6.5, 4.5, 8.5, 8.5, 9, 9, 8.5, 8.5] : [6, 54, 8, 6, 12, 14]).map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead>${cab}</thead>${corpo}</table>
       ${fim}
       ${notas.length ? `<p class="obs">${notas.join(' ')}</p>` : ''}
       ${op.obs && (o.observacoes || '').trim() ? `<div class="pe-cond"><h2>Observações e condições</h2><div class="pe-obsg">${esc(o.observacoes.trim())}</div></div>` : ''}
@@ -1490,7 +1490,7 @@
     add([['D', `<c r="D2" s="${X.cab}" t="inlineStr"><is>${rich}</is></c>`]], 118);
     merges.push('D2:K2');
     r = 4;
-    add([cel.t('B', 'ITEM', X.hd), cel.t('C', 'DESCRIÇÃO DOS SERVIÇOS', X.hd), cel.t('D', 'UNID.', X.hd), cel.t('E', 'QUANT.', X.hd), cel.t('F', 'MATERIAL', X.hd), cel.t('G', 'MÃO DE OBRA', X.hd), cel.t('H', 'TOTAL MAT', X.hd), cel.t('I', 'TOTAL MDO', X.hd), cel.t('J', 'P. UNIT. R$', X.hd), cel.t('K', 'R$ TOTAL', X.hd)], 22);
+    add([cel.t('B', 'ITEM', X.hd), cel.t('C', 'DESCRIÇÃO DOS SERVIÇOS', X.hd), cel.t('D', 'QUANT.', X.hd), cel.t('E', 'UNID.', X.hd), cel.t('F', 'MATERIAL', X.hd), cel.t('G', 'MÃO DE OBRA', X.hd), cel.t('H', 'TOTAL MAT', X.hd), cel.t('I', 'TOTAL MDO', X.hd), cel.t('J', 'P. UNIT. R$', X.hd), cel.t('K', 'R$ TOTAL', X.hd)], 22);
     r = 6;
     const subtotais = [];
     const linhaFolha = (l, num, sub) => {
@@ -1498,9 +1498,9 @@
       const [sN, sD, sU, sQ, sV] = sub ? [X.sbN, X.sbD, X.sbU, X.sbQ, X.sbV] : [X.itN, X.itD, X.itU, X.itQ, X.itV];
       const q = l.qtd, a = l.neg ? null : l.mat, b = l.neg ? null : l.mdo;
       const qq = nn(q), aa = nn(a), bb = nn(b);
-      add([cel.t('B', num, sN), cel.t('C', l.desc, sD), cel.t('D', l.un, sU), cel.n('E', q, sQ), cel.n('F', a, sV), cel.n('G', b, sV),
-        cel.f('H', `F${r}*E${r}`, qq * aa, sV), cel.f('I', `G${r}*E${r}`, qq * bb, sV), cel.f('J', `G${r}+F${r}`, aa + bb, sV),
-        l.neg ? cel.t('K', 'A NEGOCIAR', X.neg) : cel.f('K', `J${r}*E${r}`, x.tot, sV)], alt(l.desc, 64));
+      add([cel.t('B', num, sN), cel.t('C', l.desc, sD), cel.n('D', q, sQ), cel.t('E', l.un, sU), cel.n('F', a, sV), cel.n('G', b, sV),
+        cel.f('H', `F${r}*D${r}`, qq * aa, sV), cel.f('I', `G${r}*D${r}`, qq * bb, sV), cel.f('J', `G${r}+F${r}`, aa + bb, sV),
+        l.neg ? cel.t('K', 'A NEGOCIAR', X.neg) : cel.f('K', `J${r}*D${r}`, x.tot, sV)], alt(l.desc, 64));
       return r - 1;
     };
     const linhaObs = (l) => {
@@ -1554,7 +1554,7 @@
 
     const sheetRows = linhas.map((l) => `<row r="${l.r}"${l.ht ? ` ht="${l.ht}" customHeight="1"` : ''}>${l.cels.sort((a, b) => a[0].localeCompare(b[0])).map((c) => c[1]).join('')}</row>`).join('');
     const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:K${ultima}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="90" zoomScaleNormal="90"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="C6" sqref="C6"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="2.7" customWidth="1"/><col min="2" max="2" width="9.5" customWidth="1"/><col min="3" max="3" width="62" customWidth="1"/><col min="4" max="4" width="8" customWidth="1"/><col min="5" max="5" width="10.5" customWidth="1"/><col min="6" max="10" width="15.5" customWidth="1"/><col min="11" max="11" width="17.5" customWidth="1"/></cols><sheetData>${sheetRows}</sheetData><mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells><pageMargins left="0.4" right="0.4" top="0.5" bottom="0.6" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L&amp;8${xe(e.nome)} · Orçamento nº ${xe(o.codigo || '')}&amp;R&amp;8Página &amp;P de &amp;N</oddFooter></headerFooter><drawing r:id="rId1"/></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:K${ultima}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="90" zoomScaleNormal="90"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="C6" sqref="C6"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="2.7" customWidth="1"/><col min="2" max="2" width="9.5" customWidth="1"/><col min="3" max="3" width="62" customWidth="1"/><col min="4" max="4" width="10.5" customWidth="1"/><col min="5" max="5" width="8" customWidth="1"/><col min="6" max="10" width="15.5" customWidth="1"/><col min="11" max="11" width="17.5" customWidth="1"/></cols><sheetData>${sheetRows}</sheetData><mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells><pageMargins left="0.4" right="0.4" top="0.5" bottom="0.6" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L&amp;8${xe(e.nome)} · Orçamento nº ${xe(o.codigo || '')}&amp;R&amp;8Página &amp;P de &amp;N</oddFooter></headerFooter><drawing r:id="rId1"/></worksheet>`;
 
     const borda = '<left style="thin"><color rgb="FFDAD6CF"/></left><right style="thin"><color rgb="FFDAD6CF"/></right><top style="thin"><color rgb="FFDAD6CF"/></top><bottom style="thin"><color rgb="FFDAD6CF"/></bottom><diagonal/>';
     const xf = (font, fill, border, numFmt, al) => `<xf numFmtId="${numFmt}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0" applyFont="1" applyFill="1" applyBorder="1"${numFmt ? ' applyNumberFormat="1"' : ''} applyAlignment="1"><alignment ${al}/></xf>`;

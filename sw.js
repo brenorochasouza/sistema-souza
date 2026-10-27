@@ -1,12 +1,12 @@
 /* Guarda uma cópia do sistema no aparelho para abrir sem internet.
    Com internet, sempre busca a versão mais nova e atualiza a cópia. */
-const CACHE = 'souza-1.1.0';
+const CACHE = 'souza-1.1.1';
 const ARQUIVOS = [
   './', 'index.html', 'manifest.webmanifest',
-  'css/estilo.css?v=1.1.0',
-  'js/config.js?v=1.1.0', 'js/nucleo.js?v=1.1.0', 'js/inicio.js?v=1.1.0', 'js/agenda.js?v=1.1.0',
-  'js/clientes.js?v=1.1.0', 'js/orcamentos.js?v=1.1.0', 'js/obras.js?v=1.1.0', 'js/configuracoes.js?v=1.1.0',
-  'img/logo.png?v=1.1.0', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
+  'css/estilo.css?v=1.1.1',
+  'js/config.js?v=1.1.1', 'js/nucleo.js?v=1.1.1', 'js/inicio.js?v=1.1.1', 'js/agenda.js?v=1.1.1',
+  'js/clientes.js?v=1.1.1', 'js/orcamentos.js?v=1.1.1', 'js/obras.js?v=1.1.1', 'js/configuracoes.js?v=1.1.1',
+  'img/logo.png?v=1.1.1', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
   'fonts/instrument-sans-latin-400-normal.woff2', 'fonts/instrument-sans-latin-500-normal.woff2', 'fonts/instrument-sans-latin-600-normal.woff2',
   'fonts/instrument-sans-latin-ext-400-normal.woff2', 'fonts/instrument-sans-latin-ext-500-normal.woff2', 'fonts/instrument-sans-latin-ext-600-normal.woff2',
 ];
