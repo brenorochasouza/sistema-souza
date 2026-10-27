@@ -78,7 +78,7 @@
     el.innerHTML = `<div class="ini-topo"><h1>${dataLonga(new Date())}</h1>
       <div class="busca">${icone('busca')}<input class="inp" id="ini-busca" placeholder="Buscar cliente, obra ou nota" autocomplete="off"><div class="busca-caixa" id="ini-caixa" hidden></div></div></div>
       <div class="ini">
-        <div class="ini-col">${cardHoje()}${cardComercial()}${cardParcelas()}</div>
+        <div class="ini-col">${cardHoje()}${cardComercial()}${Sis.renovacoes ? Sis.renovacoes.cardInicio() : ''}${cardParcelas()}</div>
         <div class="ini-col">${cardTarefas()}${cardObras()}</div>
       </div>`;
     Sis.ligarBusca($('#ini-busca', el), $('#ini-caixa', el));
