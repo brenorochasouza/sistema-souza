@@ -1087,6 +1087,7 @@ textarea.o-in{resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:any
 .rn-ac .btn.icon.rn-ok{color:var(--ok)}
 .rn-rot{font-size:12.5px;color:var(--ink-2);font-weight:500}
 .rn-aviso{margin:-4px 0 0;min-height:1em}
+.rn-anos{display:flex;flex-wrap:wrap;gap:6px;margin-top:-4px}
 .rn-hist{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--line-3);padding-top:10px;font-size:13px}
 .rn-hist>div{display:flex;justify-content:space-between;gap:10px;color:var(--ink-2)}
 .rn-hist .secao-form{margin:0 0 2px}

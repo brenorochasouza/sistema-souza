@@ -23,6 +23,14 @@
     store.salvar(T, l.id, TIPO, d, l.clienteId || null);
   }
   const ativo = (l) => !l.situacao || l.situacao === 'ativo';
+  /** Data de entrega + anos (29/02 vira 28/02 quando o ano não é bissexto). */
+  function somaAnos(iso, anos) {
+    const [a, m, d] = iso.split('-').map(Number);
+    const fim = new Date(a + anos, m, 0).getDate();
+    return isoData(new Date(a + anos, m - 1, Math.min(d, fim)));
+  }
+  /** Anos entre entrega e renovação, para laudos gravados antes do campo existir. */
+  const anosDe = (l) => (l.anos ? l.anos : l.entrega && l.renovacao ? Math.max(1, Math.round((deISO(l.renovacao) - deISO(l.entrega)) / 31557600000)) : '');
   /** Depois de salvar, mostra a lista em que o laudo aparece. */
   const filtroDe = (l) => { const k = situacao(l).k; est.filtro = k === 'contatar' || k === 'vencido' ? 'atencao' : 'todos'; };
   const diasAte = (iso, hoje = hojeISO()) => Math.round((deISO(iso) - deISO(hoje)) / 86400000);
@@ -90,7 +98,7 @@
     const agendado = at && l.agendaEm && l.agendaPara === dataLembrete(l);
     return `<div class="rn-it ${s.k}">
       <div class="rn-cli"><b>${esc(nomeCli(l))}</b><span>${esc(l.tipo)}${l.obs ? ` · ${esc(l.obs)}` : ''}</span></div>
-      <div class="rn-dt"><span><small>Entregue</small>${dataBR(l.entrega) || '-'}</span><span><small>Renovação</small><b>${dataBR(l.renovacao) || '-'}</b></span></div>
+      <div class="rn-dt"><span><small>Entregue</small>${dataBR(l.entrega) || '-'}</span><span><small>Renovação${anosDe(l) ? ` (${anosDe(l)} ${anosDe(l) === 1 ? 'ano' : 'anos'})` : ''}</small><b>${dataBR(l.renovacao) || '-'}</b></span></div>
       <div class="rn-st"><span class="chip ${s.cls}">${esc(s.txt)}</span>${at && l.contatoEm ? `<small>${icone('check')}Contatado em ${dataBR(l.contatoEm)}</small>` : ''}</div>
       <div class="rn-ac">${at ? `
         <button class="btn icon ${agendado ? 'rn-ok' : ''}" data-a="rn-agenda" data-id="${esc(l.id)}" title="${agendado ? `Lembrete enviado para a agenda (${dataBR(l.agendaPara)})` : 'Adicionar lembrete na Google Agenda'}" aria-label="Google Agenda">${icone('agenda')}</button>
@@ -150,8 +158,9 @@
         <input class="inp" name="tipo" list="rn-tipos" value="${esc(l.tipo || '')}" placeholder="Ou digite outro laudo"><datalist id="rn-tipos">${usados.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></div>`}
       <div class="grid2">
         <label class="f req"><span>Data de entrega</span><input class="inp" type="date" name="entrega" value="${esc(l.entrega || '')}"></label>
-        <label class="f req"><span>Data de renovação</span><input class="inp" type="date" name="renovacao" value="${esc(l.renovacao || '')}"></label>
+        <label class="f req"><span>Renovar a cada (anos)</span><input class="inp" name="anos" inputmode="numeric" value="${esc(l.anos || '')}" placeholder="Ex.: 1" autocomplete="off"></label>
       </div>
+      <div class="rn-anos">${[1, 2, 3, 5].map((n) => `<button type="button" class="tipo ${String(l.anos) === String(n) ? 'on' : ''}" data-anos="${n}">${n} ${n === 1 ? 'ano' : 'anos'}</button>`).join('')}</div>
       <p class="small muted rn-aviso" data-aviso></p>
       <label class="f"><span>Observação</span><input class="inp" name="obs" value="${esc(l.obs || '')}" placeholder="Opcional. Ex.: torres A e B"></label>`;
   }
@@ -164,17 +173,19 @@
       q('tipo').addEventListener('input', () => $$('[data-tipo]', el).forEach((x) => x.classList.toggle('on', x.dataset.tipo === q('tipo').value)));
     }
     const aviso = $('[data-aviso]', el);
+    const lerAnos = () => { const t = q('anos').value.trim(); return /^\d{1,2}$/.test(t) && +t >= 1 ? +t : null; };
     const atualizar = () => {
-      const r = q('renovacao').value;
-      if (!r) { aviso.textContent = ''; return; }
-      if (q('entrega').value && r <= q('entrega').value) { aviso.innerHTML = '<span class="aviso-campo">A renovação precisa ser depois da entrega.</span>'; return; }
-      const x = { renovacao: r };
-      aviso.textContent = dataContato(x) > hojeISO() ? `Lembrete de contato em ${dataBR(dataContato(x))}, ${ANTECEDENCIA} dias antes.` : `Já está dentro dos ${ANTECEDENCIA} dias: o laudo entra direto em "Contatar".`;
+      const n = lerAnos(), e = q('entrega').value;
+      $$('[data-anos]', el).forEach((x) => x.classList.toggle('on', +x.dataset.anos === n));
+      if (!n || !e) { aviso.innerHTML = q('anos').value.trim() && !n ? '<span class="aviso-campo">Informe os anos em número inteiro, como 1 ou 5.</span>' : ''; return; }
+      const x = { renovacao: somaAnos(e, n) };
+      aviso.innerHTML = `Renovação em <b>${dataBR(x.renovacao)}</b>. ` + (dataContato(x) > hojeISO() ? `Lembrete de contato em ${dataBR(dataContato(x))}, ${ANTECEDENCIA} dias antes.` : `Já está dentro dos ${ANTECEDENCIA} dias: o laudo entra direto em "Contatar".`);
     };
-    q('renovacao').addEventListener('input', atualizar); q('entrega').addEventListener('input', atualizar); atualizar();
+    $$('[data-anos]', el).forEach((b) => b.addEventListener('click', () => { q('anos').value = b.dataset.anos; atualizar(); }));
+    q('anos').addEventListener('input', atualizar); q('entrega').addEventListener('input', atualizar); atualizar();
     return {
       ler() {
-        const v = { entrega: q('entrega').value, renovacao: q('renovacao').value, obs: q('obs').value.trim() };
+        const v = { entrega: q('entrega').value, anos: lerAnos(), obs: q('obs').value.trim() };
         if (!renovacaoSo) {
           const erro = sel.validar(); if (erro) { ui.toast(erro); return null; }
           v.clienteId = sel.valor().clienteId;
@@ -182,8 +193,8 @@
           if (!v.tipo) { q('tipo').classList.add('erro'); ui.toast('Escolha ou digite o laudo.'); return null; }
         }
         if (!v.entrega) { q('entrega').classList.add('erro'); ui.toast('Informe a data de entrega.'); return null; }
-        if (!v.renovacao) { q('renovacao').classList.add('erro'); ui.toast('Informe a data de renovação.'); return null; }
-        if (v.renovacao <= v.entrega) { q('renovacao').classList.add('erro'); ui.toast('A renovação precisa ser depois da entrega.'); return null; }
+        if (!v.anos) { q('anos').classList.add('erro'); ui.toast('Informe em quantos anos o laudo precisa ser renovado.'); return null; }
+        v.renovacao = somaAnos(v.entrega, v.anos);
         return v;
       },
     };
@@ -191,7 +202,7 @@
   A['rn-novo'] = () => {
     let f;
     ui.abrirModal({
-      titulo: 'Laudo recorrente entregue', sub: 'O sistema avisa e manda o lembrete para a Google Agenda 90 dias antes da renovação.',
+      titulo: 'Laudo recorrente entregue', sub: 'O sistema calcula a renovação e manda o lembrete para a Google Agenda 90 dias antes.',
       corpo: camposLaudo({ entrega: hojeISO() }),
       aoAbrir: (el) => { f = ligarCampos(el, {}, false); },
       botoes: [{ rot: 'Cancelar' }, {
@@ -234,7 +245,7 @@
     });
     ui.abrirModal({
       titulo: 'Editar laudo', sub: at ? '' : esc(situacao(l).txt),
-      corpo: camposLaudo(l) + (ant.length ? `<div class="rn-hist"><span class="secao-form">Ciclos anteriores</span>${ant.map((x) => `<div><span>${esc(x.tipo)}</span><span>entregue em ${dataBR(x.entrega)}</span></div>`).join('')}</div>` : ''),
+      corpo: camposLaudo(Object.assign({}, l, { anos: anosDe(l) })) + (ant.length ? `<div class="rn-hist"><span class="secao-form">Ciclos anteriores</span>${ant.map((x) => `<div><span>${esc(x.tipo)}</span><span>entregue em ${dataBR(x.entrega)}</span></div>`).join('')}</div>` : ''),
       aoAbrir: (el) => { f = ligarCampos(el, l, false); },
       botoes,
     });
@@ -244,8 +255,8 @@
     let f;
     ui.abrirModal({
       titulo: 'Registrar renovação', sub: esc(`${nomeCli(l)} · ${l.tipo}`),
-      corpo: `<p class="small muted" style="margin:0">Laudo atual entregue em ${dataBR(l.entrega)}, renovação prevista para ${dataBR(l.renovacao)}. Informe o novo laudo.</p>`
-        + camposLaudo({ entrega: hojeISO(), obs: l.obs }, { renovacaoSo: true }),
+      corpo: `<p class="small muted" style="margin:0">Laudo atual entregue em ${dataBR(l.entrega)}, renovação prevista para ${dataBR(l.renovacao)}. Informe a entrega do novo laudo.</p>`
+        + camposLaudo({ entrega: hojeISO(), anos: anosDe(l), obs: l.obs }, { renovacaoSo: true }),
       aoAbrir: (el) => { f = ligarCampos(el, l, true); },
       botoes: [{ rot: 'Cancelar' }, {
         rot: 'Registrar', classe: 'primary', acao: (m) => {
