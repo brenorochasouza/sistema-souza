@@ -6,7 +6,7 @@
    cadastro único de clientes usado por todos os módulos.
    ========================================================= */
 window.Sis = (function () {
-  const VERSAO = '1.0.0';
+  const VERSAO = '1.0.1';
   const TABELAS = ['clientes', 'comercial', 'agenda', 'obras'];
 
   /* ---------------- utilidades ---------------- */
@@ -684,7 +684,7 @@ window.Sis = (function () {
     const barra = naBarra();
     app.innerHTML = `<div class="shell">
       <aside class="lateral">
-        <a class="lat-logo" href="#/inicio"><img src="img/logo.png" alt="Souza Engenharia"></a>
+        <a class="lat-logo" href="#/inicio"><img src="img/logo.png?v=1.0.1" alt="Souza Engenharia"></a>
         <nav class="lat-nav" aria-label="Sistemas">
           <a href="#/inicio" data-nav="inicio">${icone('inicio')}<span>Início</span></a>
           ${sistemas.map((m) => `<a href="#/${m.id}" data-nav="${m.id}">${icone(m.icone)}<span>${esc(m.nome)}</span></a>`).join('')}
@@ -697,7 +697,7 @@ window.Sis = (function () {
         </div>
       </aside>
       <header class="topo-cel">
-        <a href="#/inicio" class="topo-logo"><img src="img/logo.png" alt="Souza Engenharia"></a>
+        <a href="#/inicio" class="topo-logo"><img src="img/logo.png?v=1.0.1" alt="Souza Engenharia"></a>
         <div class="topo-acoes"><button class="btn icon" data-a="sis-busca" aria-label="Buscar">${icone('busca')}</button><button data-sync="ponto" type="button" aria-label="Sincronização"></button></div>
       </header>
       <main id="conteudo" tabindex="-1"></main>
@@ -783,7 +783,7 @@ window.Sis = (function () {
   function telaLogin(msgErro = '') {
     const precisaProjeto = !S.sb;
     $('#app').innerHTML = `<div class="login"><div class="login-box">
-      <img src="img/logo.png" alt="Souza Engenharia" class="login-logo">
+      <img src="img/logo.png?v=1.0.1" alt="Souza Engenharia" class="login-logo">
       <form class="card" id="form-login" onsubmit="return false"><div class="bd">
         <h1>Entrar</h1>
         <p class="muted small">${precisaProjeto ? 'Primeiro acesso neste aparelho: informe o projeto do Supabase e o seu login.' : 'Use o seu e-mail e senha. Depois do primeiro acesso, o aparelho continua conectado.'}</p>
