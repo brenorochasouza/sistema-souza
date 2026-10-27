@@ -127,7 +127,8 @@
         <div class="card"><div class="hd"><h3>Conta e sincronização</h3></div><div class="bd">
           <dl class="kv"><dt>Conta</dt><dd>${esc(info.email || '-')}</dd><dt>Projeto</dt><dd>${esc(host)}</dd>
             <dt>Situação</dt><dd>${esc(st.txt)}</dd><dt>Aguardando envio</dt><dd>${info.pendentes}</dd>
-            <dt>Última sincronização</dt><dd>${info.ultima ? info.ultima.toLocaleString('pt-BR') : '-'}</dd></dl>
+            <dt>Última sincronização</dt><dd>${info.ultima ? info.ultima.toLocaleString('pt-BR') : '-'}</dd>
+            ${info.erro ? `<dt>Erro</dt><dd class="small" style="color:var(--over);word-break:break-word">${esc(info.erro)}</dd>` : ''}</dl>
           <p class="small muted">Tudo fica guardado no aparelho e no Supabase. Sem internet, o que você lança fica na fila e sobe sozinho quando a conexão volta.</p>
           <div class="actions"><button class="btn primary" data-a="cfg-sync">${icone('nuvem')}Sincronizar agora</button><button class="btn" data-a="cfg-sair">${icone('sair')}Sair da conta</button></div>
         </div></div>
