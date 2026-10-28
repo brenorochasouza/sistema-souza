@@ -52,8 +52,10 @@
     cargo: 'Diretor da Souza Engenharia', registro: 'CREA-BA 052098151-0', telefone: '(71) 99723-7168',
     email: 'obras@souzaengenharia.com', site: 'www.souzaengenharia.com', cidade: 'Salvador',
   };
-  const CONFIG_PADRAO = { bdi: 36, bdiRotulo: 'BDI + LUCRO + IMPOSTO', validade: 30, observacoes: '' };
-  const IMPRESSAO_PADRAO = { orientacao: 'paisagem', colunas: 'completa', bdi: 'separado', resumo: true, obs: true, assinatura: true, extenso: true };
+  const CONFIG_PADRAO = { bdi: 36, bdiRotulo: 'BDI + LUCRO + IMPOSTO', imposto: 0, impostoBase: 'custo_bdi', impostoRotulo: 'IMPOSTOS', validade: 30, observacoes: '' };
+  /** Base do imposto na obra por preço global. */
+  const BASES_IMP = [['custo_bdi', 'Custo direto + BDI'], ['custo', 'Só o custo direto']];
+  const IMPRESSAO_PADRAO = { orientacao: 'paisagem', quantitativo: 'mostrar', colunas: 'completa', bdi: 'separado', resumo: true, obs: true, assinatura: true, extenso: true };
   const ID_CONFIG = 'config';
 
   /* ---------------- números ---------------- */
@@ -151,6 +153,9 @@
     o.modalidade = MOD[o.modalidade] ? o.modalidade : 'global';
     o.bdi = vazio(o.bdi) ? 0 : Number(o.bdi);
     o.bdiRotulo = o.bdiRotulo || CONFIG_PADRAO.bdiRotulo;
+    o.imposto = vazio(o.imposto) ? 0 : Number(o.imposto);
+    o.impostoBase = o.impostoBase === 'custo' ? 'custo' : 'custo_bdi';
+    o.impostoRotulo = o.impostoRotulo || CONFIG_PADRAO.impostoRotulo;
     o.impressao = Object.assign({}, IMPRESSAO_PADRAO, o.impressao || {});
     return o;
   }
@@ -169,7 +174,14 @@
   /* ---------------- cálculo ----------------
      Linha: total = quantidade x (material + mão de obra).
      Item com subitens: soma dos subitens. Etapa: soma dos itens.
-     Valor final = custo direto + BDI (% sobre o custo direto). */
+     Valor final = custo direto + BDI (% sobre o custo direto)
+     + imposto, só na obra por preço global (% sobre o custo direto
+     ou sobre custo direto + BDI, conforme a escolha). */
+  const comImposto = (o) => o.modalidade === 'global' && nn(o.imposto) > 0;
+  function taxas(o) {
+    const b = nn(o.bdi) / 100, i = comImposto(o) ? nn(o.imposto) / 100 : 0, sobreBdi = o.impostoBase !== 'custo';
+    return { b, i, sobreBdi, fator: 1 + b + i * (sobreBdi ? 1 + b : 1) };
+  }
   function calcular(o) {
     const m = new Map();
     const folha = (l) => {
@@ -196,8 +208,10 @@
       return r;
     });
     const t = soma(etapas);
-    const taxa = nn(o.bdi) / 100;
-    return { m, etapas, mat: t.mat, mdo: t.mdo, direto: t.tot, bdiValor: t.tot * taxa, final: t.tot * (1 + taxa), nItens, nSub, nNeg };
+    const tx = taxas(o);
+    const bdiValor = t.tot * tx.b;
+    const impostoValor = (t.tot + (tx.sobreBdi ? bdiValor : 0)) * tx.i;
+    return { m, etapas, mat: t.mat, mdo: t.mdo, direto: t.tot, bdiValor, impostoValor, final: t.tot + bdiValor + impostoValor, nItens, nSub, nNeg };
   }
   const totalFinal = (o) => calcular(o).final;
 
@@ -371,6 +385,7 @@
     const o = normalizar(Object.assign({
       codigo: proximoCodigo(), titulo: '', clienteId: '', local: '', modalidade: 'global', data: hojeISO(),
       validade: cfg.validade, status: 'elaboracao', bdi: cfg.bdi, bdiRotulo: cfg.bdiRotulo,
+      imposto: cfg.imposto, impostoBase: cfg.impostoBase, impostoRotulo: cfg.impostoRotulo,
       etapas: [], observacoes: cfg.observacoes || '', criadoEm: new Date().toISOString(),
     }, dados));
     const id = Sis.util.uid();
@@ -378,6 +393,23 @@
     d.atualizadoEm = new Date().toISOString();
     store.salvar(T, id, 'orcamento', d, o.clienteId || null);
     return id;
+  }
+  /** Campos de imposto dos modais: só aparecem na obra por preço global. */
+  const camposImposto = (imposto, base) => `<label class="f" data-imp><span>Imposto (%)</span><input class="inp money" name="imposto" inputmode="decimal" value="${esc(cru(imposto))}" placeholder="0"></label>
+        <label class="f" data-imp><span>Imposto sobre</span><select class="inp" name="impostoBase">${BASES_IMP.map(([k, n]) => `<option value="${k}" ${base === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>`;
+  function ligarImposto(raiz) {
+    const sel = $('[name=modalidade]', raiz);
+    const mostrar = () => $$('[data-imp]', raiz).forEach((x) => { x.hidden = sel.value !== 'global'; });
+    sel.addEventListener('change', mostrar); mostrar();
+  }
+  /** Lê o imposto do modal. Retorna null se o valor digitado for inválido. */
+  function lerImposto(raiz) {
+    const modalidade = $('[name=modalidade]', raiz).value;
+    const campo = $('[name=imposto]', raiz);
+    if (modalidade !== 'global') return {};
+    const r = lerNumero(campo.value);
+    if (!r || (r.v !== null && r.v < 0)) { campo.classList.add('erro'); campo.focus(); return null; }
+    return { imposto: r.v === null ? 0 : r.v, impostoBase: $('[name=impostoBase]', raiz).value };
   }
   A['orc-novo'] = () => {
     const cfg = config();
@@ -390,6 +422,7 @@
         <div class="span2" id="orc-n-cli"></div>
         <label class="f"><span>Modalidade</span><select class="inp" name="modalidade">${MODALIDADES.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
         <label class="f"><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(cfg.bdi))}"></label>
+        ${camposImposto(cfg.imposto, cfg.impostoBase)}
       </div>
       <div class="f"><span class="secao-form">Começar com</span>
         <div class="o-inicio">
@@ -401,6 +434,7 @@
       </div>`,
       aoAbrir: (m) => {
         sel = Sis.seletorCliente($('#orc-n-cli', m), { rotulo: 'Cliente' });
+        ligarImposto(m);
         $$('[name=base]', m).forEach((r) => r.addEventListener('change', () => { $('[name=origem]', m).hidden = $('[name=base]:checked', m).value !== 'copia'; }));
       },
       botoes: [{ rot: 'Cancelar' }, {
@@ -410,6 +444,7 @@
           const erro = sel.validar(); if (erro) { ui.toast(erro); return; }
           const bdi = lerNumero($('[name=bdi]', m.el).value);
           if (!bdi || bdi.v === null) { $('[name=bdi]', m.el).classList.add('erro'); return; }
+          const imp = lerImposto(m.el); if (!imp) return;
           const base = $('[name=base]:checked', m.el).value;
           let etapas = [];
           if (base === 'padrao') etapas = ETAPAS_PADRAO.map((t) => novaEtapa(t));
@@ -417,7 +452,7 @@
             const src = listaOrc().find((o) => o.id === $('[name=origem]', m.el).value);
             if (src) etapas = copia(src.etapas).map(novosIds);
           }
-          const id = criarOrc({ titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, etapas });
+          const id = criarOrc(Object.assign({ titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, etapas }, imp));
           m.fechar();
           location.hash = `#/orcamentos/${id}`;
         },
@@ -432,7 +467,10 @@
   const NUMS = new Set(['qtd', 'mat', 'mdo']);
   const totHTML = (r) => (r.neg ? '<span class="o-negc">A negociar</span>' : fv(r.tot));
   const totEtapa = (r, c) => (r.neg ? '<span class="o-negc">A negociar</span>' : `<b class="n">${brl(r.tot)}</b><small>${c.direto ? pct(r.tot / c.direto) : ''}</small>`);
-  const bdiTxt = (o) => pct(nn(o.bdi) / 100, Math.round(nn(o.bdi) * 100) % 100 ? 2 : 0);
+  const pctTxt = (v) => pct(nn(v) / 100, Math.round(nn(v) * 100) % 100 ? 2 : 0);
+  const bdiTxt = (o) => pctTxt(o.bdi);
+  const impTxt = (o) => pctTxt(o.imposto);
+  const baseImpTxt = (o) => (o.impostoBase === 'custo' ? 'sobre o custo direto' : 'sobre custo + BDI');
 
   function htmlTopo(o) {
     const st = ST[o.status], cli = clientes.nome(o.clienteId);
@@ -445,17 +483,20 @@
   }
   function htmlKpis(o, c) {
     const d = c.direto;
-    return `<div class="o-kpis">
+    const imp = comImposto(o);
+    return `<div class="o-kpis ${imp ? 'com-imp' : ''}">
       <div class="o-k"><span>Custo direto</span><b class="n">${brl(c.direto)}</b><small>${o.etapas.length} ${o.etapas.length === 1 ? 'etapa' : 'etapas'} · ${c.nItens} itens · ${c.nSub} subitens</small></div>
       <div class="o-k"><span>Material</span><b class="n">${brl(c.mat)}</b><small>${d ? pct(c.mat / d) : '0%'} do custo direto</small></div>
       <div class="o-k"><span>Mão de obra</span><b class="n">${brl(c.mdo)}</b><small>${d ? pct(c.mdo / d) : '0%'} do custo direto</small></div>
       <div class="o-k"><span>${esc(o.bdiRotulo)}</span><b class="n">${brl(c.bdiValor)}</b><small>${bdiTxt(o)} sobre o custo direto</small></div>
-      <div class="o-k hero"><span>Valor final</span><b class="n">${brl(c.final)}</b><small>${c.nNeg ? `Fora do total: ${c.nNeg} ${c.nNeg === 1 ? 'linha' : 'linhas'} a negociar` : 'Custo direto + BDI'}</small></div>
+      ${imp ? `<div class="o-k"><span>${esc(o.impostoRotulo)}</span><b class="n">${brl(c.impostoValor)}</b><small>${impTxt(o)} ${baseImpTxt(o)}</small></div>` : ''}
+      <div class="o-k hero"><span>Valor final</span><b class="n">${brl(c.final)}</b><small>${c.nNeg ? `Fora do total: ${c.nNeg} ${c.nNeg === 1 ? 'linha' : 'linhas'} a negociar` : imp ? 'Custo direto + BDI + imposto' : 'Custo direto + BDI'}</small></div>
     </div>`;
   }
   function htmlBarra(o, c) {
     return `<div class="o-b-it o-so-pc"><span>Custo direto</span><b class="n">${brl(c.direto)}</b></div>
       <div class="o-b-it"><span>${esc(o.bdiRotulo)} (${bdiTxt(o)})</span><b class="n">${brl(c.bdiValor)}</b></div>
+      ${comImposto(o) ? `<div class="o-b-it"><span>${esc(o.impostoRotulo)} (${impTxt(o)})</span><b class="n">${brl(c.impostoValor)}</b></div>` : ''}
       <div class="o-b-it fim"><span>Valor final</span><b class="n">${brl(c.final)}</b></div>`;
   }
 
@@ -1156,11 +1197,12 @@
     return `<div class="o-res">
       <div class="card o-res-et"><div class="hd"><div><h3>Custo por etapa</h3><p>Custo direto, sem BDI</p></div><div class="legend"><span><i class="sw" style="background:var(--brand)"></i>Material</span><span><i class="sw" style="background:var(--apagar)"></i>Mão de obra</span></div></div><div class="bd">${barras}</div></div>
       <div class="card"><div class="hd"><div><h3>Formação do preço</h3><p>Do custo direto ao valor final</p></div></div><div class="bd">
-        <div class="o-comp"><i class="m" style="flex:${c.mat}"></i><i class="d" style="flex:${c.mdo}"></i><i class="b" style="flex:${c.bdiValor}"></i></div>
+        <div class="o-comp"><i class="m" style="flex:${c.mat}"></i><i class="d" style="flex:${c.mdo}"></i><i class="b" style="flex:${c.bdiValor}"></i>${c.impostoValor ? `<i class="x" style="flex:${c.impostoValor}"></i>` : ''}</div>
         <dl class="o-dl"><dt><i class="sw" style="background:var(--brand)"></i>Material</dt><dd class="n">${brl(c.mat)}</dd><dd>${pct(pm)}</dd>
           <dt><i class="sw" style="background:var(--apagar)"></i>Mão de obra</dt><dd class="n">${brl(c.mdo)}</dd><dd>${d ? pct(1 - pm) : '0%'}</dd>
           <dt class="t">Custo direto</dt><dd class="n t">${brl(c.direto)}</dd><dd class="t">100%</dd>
           <dt><i class="sw" style="background:var(--ink)"></i>${esc(o.bdiRotulo)}</dt><dd class="n">${brl(c.bdiValor)}</dd><dd>${bdiTxt(o)}</dd>
+          ${comImposto(o) ? `<dt><i class="sw" style="background:var(--imposto)"></i>${esc(o.impostoRotulo)}</dt><dd class="n">${brl(c.impostoValor)}</dd><dd>${impTxt(o)}</dd>` : ''}
           <dt class="f">Valor final</dt><dd class="n f">${brl(c.final)}</dd><dd class="f"></dd></dl>
         <p class="small muted o-ext">${esc(extenso(c.final))}</p></div></div>
       <div class="card o-res-abc"><div class="hd"><div><h3>Curva ABC dos serviços</h3><p>${abc.length ? `Classe A: ${cont.A} ${cont.A === 1 ? 'serviço soma' : 'serviços somam'} 80% do custo direto · B: ${cont.B} · C: ${cont.C}` : 'Sem serviços com valor.'}</p></div></div>
@@ -1188,7 +1230,12 @@
         <label class="f"><span>BDI (%)</span><input class="inp money" data-o="bdi" inputmode="decimal" value="${esc(cru(o.bdi))}"></label>
         <label class="f"><span>Validade da proposta (dias)</span><input class="inp money" data-o="validade" inputmode="numeric" value="${esc(o.validade ?? '')}"></label>
         <label class="f span2"><span>Nome do BDI na planilha</span><input class="inp" data-o="bdiRotulo" value="${esc(o.bdiRotulo)}"></label>
-      </div><p class="small muted" style="margin:10px 0 0">O BDI incide sobre o custo direto (material + mão de obra). Valor final = custo direto + BDI.</p></div></div>
+        ${o.modalidade === 'global' ? `<label class="f"><span>Imposto (%)</span><input class="inp money" data-o="imposto" inputmode="decimal" value="${esc(cru(o.imposto))}" placeholder="0"></label>
+        <label class="f"><span>Imposto sobre</span><select class="inp" data-o="impostoBase">${BASES_IMP.map(([k, n]) => `<option value="${k}" ${o.impostoBase === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label class="f span2"><span>Nome do imposto na planilha</span><input class="inp" data-o="impostoRotulo" value="${esc(o.impostoRotulo)}"></label>` : ''}
+      </div><p class="small muted" style="margin:10px 0 0">${o.modalidade === 'global'
+        ? `O BDI incide sobre o custo direto (material + mão de obra). O imposto incide ${o.impostoBase === 'custo' ? 'só sobre o custo direto' : 'sobre o custo direto + BDI'}. Valor final = custo direto + BDI + imposto.`
+        : 'O BDI incide sobre o custo direto (material + mão de obra). Valor final = custo direto + BDI.'}</p></div></div>
       <div class="card o-dados-obs"><div class="hd"><div><h3>Observações e condições</h3><p>Saem no fim da planilha impressa. Ex.: prazo de execução, forma de pagamento, o que não está incluso.</p></div></div>
         <div class="bd"><textarea class="inp" data-o="observacoes" rows="8" placeholder="Uma condição por linha">${esc(o.observacoes || '')}</textarea></div></div>
     </div>`;
@@ -1204,12 +1251,15 @@
     const k = t.dataset.o;
     let v = t.value;
     if (k === 'bdi') { const r = lerNumero(v); if (!r || r.v === null || r.v < 0) { t.classList.add('erro'); ui.toast('Informe o BDI em %, por exemplo 36.'); return; } v = r.v; t.value = cru(v); }
+    else if (k === 'imposto') { const r = lerNumero(v); if (!r || (r.v !== null && r.v < 0)) { t.classList.add('erro'); ui.toast('Informe o imposto em %, por exemplo 8.'); return; } v = r.v === null ? 0 : r.v; t.value = cru(v); }
+    else if (k === 'impostoRotulo' || k === 'bdiRotulo') { v = v.trim() || CONFIG_PADRAO[k]; t.value = v; }
     else if (k === 'validade') { v = v.trim() === '' ? null : parseInt(v, 10); if (v !== null && !(v >= 0)) { t.classList.add('erro'); return; } }
     else if (k !== 'observacoes') v = v.trim();
     t.classList.remove('erro');
     if (k === 'titulo' && !v) { t.classList.add('erro'); return; }
     mudar((o) => { o[k] = v; if (k === 'status') o.statusEm = hojeISO(); }, { pintar: false });
     pintarTopo();
+    if (k === 'modalidade' || k === 'impostoBase') pintar();
   });
 
   /* ---------------- situação, duplicar, excluir ---------------- */
@@ -1271,9 +1321,10 @@
      ========================================================= */
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const DATA_LONGA = (iso) => { if (!iso) return ''; const [a, m, d] = iso.split('-').map(Number); return `${d} de ${Sis.util.MESES_LONGOS[m - 1]} de ${a}`; };
-  /** Valores para impressão e Excel. Com o BDI embutido, os preços unitários são arredondados ao centavo. */
+  /** Valores para impressão e Excel. Com o BDI (e o imposto) embutido, os preços unitários são arredondados ao centavo. */
   function valoresSaida(o, embutido) {
-    const f = embutido ? 1 + nn(o.bdi) / 100 : 1;
+    const tx = taxas(o);
+    const f = embutido ? tx.fator : 1;
     const m = new Map();
     const folha = (l) => {
       const semPreco = vazio(l.mat) && vazio(l.mdo);
@@ -1296,23 +1347,28 @@
       m.set(e.id, r); return r;
     });
     const t = soma(ets);
-    const bdi = embutido ? 0 : t.tot * nn(o.bdi) / 100;
-    return { m, tm: t.tm, td: t.td, direto: t.tot, bdi, final: t.tot + bdi };
+    const bdi = embutido ? 0 : t.tot * tx.b;
+    const imposto = embutido ? 0 : (t.tot + (tx.sobreBdi ? bdi : 0)) * tx.i;
+    return { m, tm: t.tm, td: t.td, direto: t.tot, bdi, imposto, final: t.tot + bdi + imposto };
   }
 
   function htmlImpressao(o, op) {
     const cfg = config(), e = cfg.empresa;
-    const emb = op.bdi === 'embutido', completa = op.colunas !== 'resumida';
+    const emb = op.bdi === 'embutido', semQ = op.quantitativo === 'ocultar', completa = !semQ && op.colunas !== 'resumida';
+    const imp = comImposto(o);
+    const incl = imp ? `BDI de ${bdiTxt(o)} e imposto de ${impTxt(o)} inclusos` : `BDI de ${bdiTxt(o)} incluso`;
     const V = valoresSaida(o, emb);
     const cli = clientes.get(o.clienteId);
     const local = o.local || (cli && cli.endereco) || '';
-    const nc = completa ? 10 : 6;
+    const nc = semQ ? 3 : completa ? 10 : 6;
     const negc = '<span class="pe-neg">A negociar</span>';
     const tot = (r) => (r.neg ? negc : fv(r.tot));
     const linha = (l, num, sub) => {
       const r = V.m.get(l.id), g = !sub && temSub(l);
       let h;
-      if (g) {
+      if (semQ) {
+        h = `<tr class="${g ? 'pe-grp' : sub ? 'pe-sub' : 'pe-it'}"><td class="c-i">${num}</td><td class="pe-d">${esc(l.desc)}</td><td class="num pe-t">${tot(r)}</td></tr>`;
+      } else if (g) {
         h = completa
           ? `<tr class="pe-grp"><td class="c-i">${num}</td><td colspan="5">${esc(l.desc)}</td><td class="num">${fv(r.tm)}</td><td class="num">${fv(r.td)}</td><td></td><td class="num">${tot(r)}</td></tr>`
           : `<tr class="pe-grp"><td class="c-i">${num}</td><td colspan="4">${esc(l.desc)}</td><td class="num">${tot(r)}</td></tr>`;
@@ -1334,26 +1390,32 @@
         if (temSub(l)) l.sub.forEach((s, k) => { corpo += linha(s, `${n}.${j + 1}.${k + 1}`, true); });
       });
       if (!et.itens.length) corpo += `<tr class="pe-it"><td></td><td colspan="${nc - 1}" class="pe-vaz">Sem itens</td></tr>`;
-      corpo += completa
+      corpo += semQ
+        ? `<tr class="pe-st"><td></td><td>Subtotal da etapa ${n}</td><td class="num">${tot(re)}</td></tr>`
+        : completa
         ? `<tr class="pe-st"><td></td><td colspan="5">Subtotal da etapa ${n}</td><td class="num">${fv(re.tm)}</td><td class="num">${fv(re.td)}</td><td></td><td class="num">${tot(re)}</td></tr>`
         : `<tr class="pe-st"><td></td><td colspan="4">Subtotal da etapa ${n}</td><td class="num">${tot(re)}</td></tr>`;
       corpo += '</tbody>';
     });
-    const cab = completa
+    const cab = semQ
+      ? '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num">Valor</th></tr>'
+      : completa
       ? '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num c-q">Quant.</th><th class="c-u">Unid.</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total material</th><th class="num">Total mão de obra</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>'
       : '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num c-q">Quant.</th><th class="c-u">Unid.</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>';
     const resumo = op.resumo ? `<h2>Resumo por etapa</h2><table class="pe-res"><colgroup><col style="width:6%"><col><col style="width:13%"><col style="width:13%"><col style="width:14%"><col style="width:8%"></colgroup><thead><tr><th class="c-i">Item</th><th>Etapa</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total</th><th class="num">%</th></tr></thead><tbody>
         ${o.etapas.map((et, i) => { const r = V.m.get(et.id); return `<tr><td class="c-i">${i + 1}</td><td>${esc(et.titulo)}</td><td class="num">${fv(r.tm)}</td><td class="num">${fv(r.td)}</td><td class="num">${tot(r)}</td><td class="num">${V.direto && !r.neg ? pct(r.tot / V.direto) : ''}</td></tr>`; }).join('')}</tbody>
         <tfoot>${emb ? '' : `<tr><td></td><td>Custo direto</td><td class="num">${fv(V.tm)}</td><td class="num">${fv(V.td)}</td><td class="num">${fv(V.direto)}</td><td class="num">100%</td></tr>
-          <tr><td></td><td colspan="3">${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${fv(V.bdi)}</td><td></td></tr>`}
-          <tr class="f"><td></td><td colspan="3">Valor final${emb ? ` (BDI de ${bdiTxt(o)} incluso)` : ''}</td><td class="num">${fv(V.final)}</td><td></td></tr></tfoot></table>` : '';
+          <tr><td></td><td colspan="3">${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${fv(V.bdi)}</td><td></td></tr>
+          ${imp ? `<tr><td></td><td colspan="3">${esc(o.impostoRotulo)} (${impTxt(o)})</td><td class="num">${fv(V.imposto)}</td><td></td></tr>` : ''}`}
+          <tr class="f"><td></td><td colspan="3">Valor final${emb ? ` (${incl})` : ''}</td><td class="num">${fv(V.final)}</td><td></td></tr></tfoot></table>` : '';
     const fim = `<div class="pe-fim"><table class="pe-tot">
-        ${emb ? '' : `<tr><td>Subtotal geral (custo direto)</td><td class="num">${brl(V.direto)}</td></tr><tr><td>${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${brl(V.bdi)}</td></tr>`}
-        <tr class="f"><td>Valor final da obra${emb ? ` (BDI de ${bdiTxt(o)} incluso)` : ''}</td><td class="num">${brl(V.final)}</td></tr></table>
+        ${emb ? '' : `<tr><td>Subtotal geral (custo direto)</td><td class="num">${brl(V.direto)}</td></tr><tr><td>${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${brl(V.bdi)}</td></tr>`
+          + (imp ? `<tr><td>${esc(o.impostoRotulo)} (${impTxt(o)})</td><td class="num">${brl(V.imposto)}</td></tr>` : '')}
+        <tr class="f"><td>Valor final da obra${emb ? ` (${incl})` : ''}</td><td class="num">${brl(V.final)}</td></tr></table>
         ${op.extenso ? `<p class="pe-ext">${esc(cap(extenso(V.final)))}.</p>` : ''}</div>`;
     const temNeg = calcular(o).nNeg > 0;
-    const notas = [emb ? `Preços unitários com BDI de ${bdiTxt(o)} incluso, arredondados ao centavo.` : '', temNeg ? 'Itens "a negociar" não entram no valor final.' : ''].filter(Boolean);
-    return `<div class="rp pe ${op.orientacao === 'retrato' ? 'retrato' : ''} ${completa ? '' : 'resumida'}">
+    const notas = [emb ? (semQ ? `Valores com ${incl}.` : `Preços unitários com ${incl}, arredondados ao centavo.`) : '', temNeg ? 'Itens "a negociar" não entram no valor final.' : ''].filter(Boolean);
+    return `<div class="rp pe ${op.orientacao === 'retrato' ? 'retrato' : ''} ${completa ? '' : 'resumida'} ${semQ ? 'semquant' : ''}">
       <div class="rp-head"><div class="rp-logo"><img src="img/logo.png?v=${Sis.VERSAO}" alt="${esc(e.nome)}"></div>
         <div class="rp-tit"><h1>Planilha orçamentária</h1><div class="pe-mod">${TITULO_MOD[o.modalidade]}</div><div>Orçamento nº ${esc(o.codigo || 's/n')} · ${dataBR(o.data)}${o.validade ? ` · Validade de ${o.validade} dias` : ''}</div></div></div>
       <div class="rp-obra">
@@ -1363,7 +1425,7 @@
       </div>
       ${resumo}
       ${op.resumo ? '<h2>Planilha detalhada</h2>' : ''}
-      <table class="pe-tab"><colgroup>${(completa ? [5, 32, 6.5, 4.5, 8.5, 8.5, 9, 9, 8.5, 8.5] : [6, 54, 8, 6, 12, 14]).map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead>${cab}</thead>${corpo}</table>
+      <table class="pe-tab"><colgroup>${(semQ ? [7, 75, 18] : completa ? [5, 32, 6.5, 4.5, 8.5, 8.5, 9, 9, 8.5, 8.5] : [6, 54, 8, 6, 12, 14]).map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead>${cab}</thead>${corpo}</table>
       ${fim}
       ${notas.length ? `<p class="obs">${notas.join(' ')}</p>` : ''}
       ${op.obs && (o.observacoes || '').trim() ? `<div class="pe-cond"><h2>Observações e condições</h2><div class="pe-obsg">${esc(o.observacoes.trim())}</div></div>` : ''}
@@ -1405,11 +1467,14 @@
       titulo: 'Imprimir ou salvar PDF', sub: 'Na janela de impressão, escolha "Salvar como PDF" para gerar o arquivo.',
       corpo: `<div class="o-imp">
         <div class="f"><span>Folha</span>${seg('orientacao', [['paisagem', 'A4 deitada'], ['retrato', 'A4 em pé']])}</div>
-        <div class="f"><span>Colunas</span>${seg('colunas', [['completa', 'Material e mão de obra'], ['resumida', 'Só preço unitário e total']])}</div>
+        <div class="f"><span>Quantitativo</span>${seg('quantitativo', [['mostrar', 'Mostrar quantidades e preços unitários'], ['ocultar', 'Só o valor de cada item']])}</div>
+        <div class="f" data-colunas><span>Colunas</span>${seg('colunas', [['completa', 'Material e mão de obra'], ['resumida', 'Só preço unitário e total']])}</div>
         <div class="f"><span>BDI</span>${seg('bdi', [['separado', 'Em linha separada'], ['embutido', 'Embutido nos preços']])}</div>
         <div class="o-imp-chk">${chk('resumo', 'Resumo por etapa no início')}${chk('extenso', 'Valor final por extenso')}${chk('obs', 'Observações e condições')}${chk('assinatura', 'Local, data e assinatura')}</div></div>`,
       aoAbrir: (el) => {
-        $$('.o-seg', el).forEach((s) => s.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (!b) return; op[s.dataset.op] = b.dataset.v; $$('button', s).forEach((x) => x.classList.toggle('on', x === b)); }));
+        const cols = () => { const f = $('[data-colunas]', el); const off = op.quantitativo === 'ocultar'; f.classList.toggle('o-off', off); $$('button', f).forEach((b) => { b.disabled = off; }); };
+        $$('.o-seg', el).forEach((s) => s.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (!b || b.disabled) return; op[s.dataset.op] = b.dataset.v; $$('button', s).forEach((x) => x.classList.toggle('on', x === b)); cols(); }));
+        cols();
         $$('input[data-op]', el).forEach((c) => c.addEventListener('change', () => { op[c.dataset.op] = c.checked; }));
       },
       botoes: [{ rot: 'Cancelar' }, {
@@ -1540,10 +1605,17 @@
     const rSG = r;
     add([cel.t('B', 'SUBTOTAL GERAL', X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', subtotais.map((k) => `K${k}`).join('+') || '0', V.direto, X.fimV)], 20);
     merges.push(`B${rSG}:J${rSG}`);
-    add([cel.t('B', `${o.bdiRotulo} (${bdiTxt(o)})`, X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `K${rSG}*${xn(nn(o.bdi) / 100)}`, V.direto * nn(o.bdi) / 100, X.fimV)], 20);
+    add([cel.t('B', `${o.bdiRotulo} (${bdiTxt(o)})`, X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `K${rSG}*${xn(nn(o.bdi) / 100)}`, V.bdi, X.fimV)], 20);
     merges.push(`B${rSG + 1}:J${rSG + 1}`);
-    add([cel.t('B', 'VALOR FINAL DA OBRA', X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `SUM(K${rSG}:K${rSG + 1})`, V.direto * (1 + nn(o.bdi) / 100), X.fimV)], 22);
-    merges.push(`B${rSG + 2}:J${rSG + 2}`);
+    let rFim = rSG + 1;
+    if (comImposto(o)) {
+      const baseF = o.impostoBase === 'custo' ? `K${rSG}` : `(K${rSG}+K${rSG + 1})`;
+      add([cel.t('B', `${o.impostoRotulo} (${impTxt(o)})`, X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `${baseF}*${xn(nn(o.imposto) / 100)}`, V.imposto, X.fimV)], 20);
+      merges.push(`B${rSG + 2}:J${rSG + 2}`);
+      rFim = rSG + 2;
+    }
+    add([cel.t('B', 'VALOR FINAL DA OBRA', X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `SUM(K${rSG}:K${rFim})`, V.final, X.fimV)], 22);
+    merges.push(`B${rFim + 1}:J${rFim + 1}`);
     if ((o.observacoes || '').trim()) {
       r++;
       const t = 'OBSERVAÇÕES E CONDIÇÕES\n' + o.observacoes.trim();
@@ -1702,7 +1774,7 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
         else if (/^mao de obra|^m\.? ?o\.?$/.test(t)) cols.mdo = k;
       });
     }
-    const o = { titulo: '', modalidade: 'global', bdi: null, bdiRotulo: '', etapas: [] };
+    const o = { titulo: '', modalidade: 'global', bdi: null, bdiRotulo: '', imposto: null, impostoRotulo: '', etapas: [] };
     const renum = [];
     let etapa = null, grupo = null, ultimo = null, ultimoItem = null;
     const numCel = (v) => (vazio(v) || typeof v !== 'number' ? (typeof v === 'string' && /^-?[\d.,]+$/.test(v.trim()) ? Number(v.replace(/\./g, '').replace(',', '.')) : null) : v);
@@ -1722,6 +1794,12 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       const rot = it || ds;
       if (/^observa/i.test(rot)) {
         if (ultimo) ultimo.obs = txt(rot.replace(/^observa[çc][ãa]o\s*:?\s*/i, ''));
+        continue;
+      }
+      if (/imposto/i.test(rot) && !/bdi/i.test(rot) && !ds) {
+        const m = rot.match(/\(\s*(\d+(?:[.,]\d+)?)\s*%/);
+        if (m) o.imposto = Number(m[1].replace(',', '.'));
+        o.impostoRotulo = txt(rot.replace(/\(.*\)/, ''));
         continue;
       }
       if (/bdi/i.test(rot) && !ds) {
@@ -1789,8 +1867,9 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
           <div class="grid2"><label class="f req span2"><span>Obra ou serviço</span><input class="inp" name="titulo" value="${esc(p.titulo)}"></label>
           <div class="span2" id="orc-i-cli"></div>
           <label class="f"><span>Modalidade</span><select class="inp" name="modalidade">${MODALIDADES.map(([k, n]) => `<option value="${k}" ${p.modalidade === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
-          <label class="f"><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(p.bdi))}"></label></div>`,
-        aoAbrir: (el) => { sel = Sis.seletorCliente($('#orc-i-cli', el), { rotulo: 'Cliente' }); },
+          <label class="f"><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(p.bdi))}"></label>
+          ${camposImposto(p.imposto ?? 0, cfg.impostoBase)}</div>`,
+        aoAbrir: (el) => { sel = Sis.seletorCliente($('#orc-i-cli', el), { rotulo: 'Cliente' }); ligarImposto(el); },
         botoes: [{ rot: 'Cancelar' }, {
           rot: 'Criar orçamento', classe: 'primary', acao: (m) => {
             const titulo = $('[name=titulo]', m.el).value.trim();
@@ -1798,7 +1877,8 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
             const erro = sel.validar(); if (erro) { ui.toast(erro); return; }
             const bdi = lerNumero($('[name=bdi]', m.el).value);
             if (!bdi || bdi.v === null) { $('[name=bdi]', m.el).classList.add('erro'); return; }
-            const id = criarOrc({ titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, bdiRotulo: p.bdiRotulo, etapas: p.etapas });
+            const imp = lerImposto(m.el); if (!imp) return;
+            const id = criarOrc(Object.assign({ titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, bdiRotulo: p.bdiRotulo, etapas: p.etapas }, imp, p.impostoRotulo ? { impostoRotulo: p.impostoRotulo } : {}));
             m.fechar();
             location.hash = `#/orcamentos/${id}`;
             ui.toast('Planilha importada.');
@@ -1823,17 +1903,22 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
         ${f('empresa.site', 'Site', e.site, 'span2')}
         ${f('bdi', 'BDI padrão (%)', cru(c.bdi))}${f('validade', 'Validade padrão (dias)', c.validade)}
         ${f('bdiRotulo', 'Nome do BDI', c.bdiRotulo, 'span2')}
+        ${f('imposto', 'Imposto padrão na obra por preço global (%)', cru(c.imposto))}
+        <label class="f"><span>Imposto sobre</span><select class="inp" data-oc="impostoBase">${BASES_IMP.map(([k, n]) => `<option value="${k}" ${c.impostoBase === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        ${f('impostoRotulo', 'Nome do imposto', c.impostoRotulo, 'span2')}
         <label class="f span2"><span>Observações padrão de um orçamento novo</span><textarea class="inp" data-oc="observacoes" rows="4" placeholder="Ex.: Prazo de execução, forma de pagamento">${esc(c.observacoes || '')}</textarea></label>
       </div>
       <div class="actions" style="margin-top:12px"><button class="btn primary" data-a="orc-cfg-salvar">Salvar</button></div></div></div>`;
   }
   A['orc-cfg-salvar'] = () => {
     const c = config();
-    const novo = { empresa: Object.assign({}, c.empresa), bdi: c.bdi, validade: c.validade, bdiRotulo: c.bdiRotulo, observacoes: c.observacoes };
+    const novo = { empresa: Object.assign({}, c.empresa), bdi: c.bdi, validade: c.validade, bdiRotulo: c.bdiRotulo, imposto: c.imposto, impostoBase: c.impostoBase, impostoRotulo: c.impostoRotulo, observacoes: c.observacoes };
     for (const el of $$('[data-oc]')) {
       const k = el.dataset.oc, v = el.value.trim();
       if (k.startsWith('empresa.')) novo.empresa[k.slice(8)] = v;
       else if (k === 'bdi') { const r = lerNumero(v); if (!r || r.v === null) { el.classList.add('erro'); ui.toast('Confira o BDI padrão.'); return; } novo.bdi = r.v; }
+      else if (k === 'imposto') { const r = lerNumero(v); if (!r || (r.v !== null && r.v < 0)) { el.classList.add('erro'); ui.toast('Confira o imposto padrão.'); return; } novo.imposto = r.v === null ? 0 : r.v; }
+      else if (k === 'impostoRotulo' || k === 'bdiRotulo') novo[k] = v || CONFIG_PADRAO[k];
       else if (k === 'validade') { const n = v === '' ? null : parseInt(v, 10); if (n !== null && !(n >= 0)) { el.classList.add('erro'); return; } novo.validade = n; }
       else novo[k] = k === 'observacoes' ? el.value : v;
     }
