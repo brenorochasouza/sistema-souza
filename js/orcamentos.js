@@ -162,14 +162,19 @@
   const registro = (id) => { const r = store.get(T, id); return r && r.tipo === 'orcamento' ? r : null; };
   const listaOrc = () => store.lista(T, 'orcamento').map((r) => normalizar(Object.assign({ id: r.id }, copia(r.dados))));
 
-  function proximoCodigo(ano = new Date().getFullYear()) {
-    let max = 0;
-    store.lista(T, 'orcamento').forEach((r) => {
-      const m = String((r.dados && r.dados.codigo) || '').match(/^(\d+)\/(\d{4})$/);
-      if (m && +m[2] === ano) max = Math.max(max, +m[1]);
-    });
-    return String(max + 1).padStart(3, '0') + '/' + ano;
+  /** Número do orçamento: código interno digitado pelo Breno (ex.: SE268.REF). */
+  const campoNumero = (v = '') => `<label class="f req"><span>Número do orçamento</span><input class="inp" name="codigo" value="${esc(v)}" placeholder="Ex.: SE268.REF" autocomplete="off" autocapitalize="characters" spellcheck="false" autofocus></label>`;
+  /** Lê e confere o número do modal. Retorna null se faltar ou já existir. */
+  function lerNumeroOrc(raiz) {
+    const campo = $('[name=codigo]', raiz);
+    const v = campo.value.trim();
+    if (!v) { campo.classList.add('erro'); campo.focus(); ui.toast('Informe o número do orçamento.'); return null; }
+    const outro = listaOrc().find((o) => norm(o.codigo || '') === norm(v));
+    if (outro) { campo.classList.add('erro'); campo.focus(); ui.toast(`O número ${v} já está no orçamento "${outro.titulo || 'sem título'}".`); return null; }
+    return v;
   }
+  /** Nome do arquivo: número - nome da obra. */
+  const nomeArquivo = (o) => [o.codigo, o.titulo].map((x) => String(x || '').trim()).filter(Boolean).join(' - ').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim() || 'Orçamento';
 
   /* ---------------- cálculo ----------------
      Linha: total = quantidade x (material + mão de obra).
@@ -383,7 +388,7 @@
   function criarOrc(dados) {
     const cfg = config();
     const o = normalizar(Object.assign({
-      codigo: proximoCodigo(), titulo: '', clienteId: '', local: '', modalidade: 'global', data: hojeISO(),
+      codigo: '', titulo: '', clienteId: '', local: '', modalidade: 'global', data: hojeISO(),
       validade: cfg.validade, status: 'elaboracao', bdi: cfg.bdi, bdiRotulo: cfg.bdiRotulo,
       imposto: cfg.imposto, impostoBase: cfg.impostoBase, impostoRotulo: cfg.impostoRotulo,
       etapas: [], observacoes: cfg.observacoes || '', criadoEm: new Date().toISOString(),
@@ -418,9 +423,10 @@
     ui.abrirModal({
       titulo: 'Novo orçamento', sub: 'Você completa as etapas, os itens e os subitens na planilha.',
       corpo: `<div class="grid2">
-        <label class="f req span2"><span>Obra ou serviço</span><input class="inp" name="titulo" placeholder="Ex.: Impermeabilização da cobertura" autofocus></label>
-        <div class="span2" id="orc-n-cli"></div>
+        ${campoNumero()}
         <label class="f"><span>Modalidade</span><select class="inp" name="modalidade">${MODALIDADES.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
+        <label class="f req span2"><span>Obra ou serviço</span><input class="inp" name="titulo" placeholder="Ex.: Impermeabilização da cobertura"></label>
+        <div class="span2" id="orc-n-cli"></div>
         <label class="f"><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(cfg.bdi))}"></label>
         ${camposImposto(cfg.imposto, cfg.impostoBase)}
       </div>
@@ -439,6 +445,7 @@
       },
       botoes: [{ rot: 'Cancelar' }, {
         rot: 'Criar orçamento', classe: 'primary', acao: (m) => {
+          const codigo = lerNumeroOrc(m.el); if (!codigo) return;
           const titulo = $('[name=titulo]', m.el).value.trim();
           if (!titulo) { $('[name=titulo]', m.el).classList.add('erro'); $('[name=titulo]', m.el).focus(); return; }
           const erro = sel.validar(); if (erro) { ui.toast(erro); return; }
@@ -452,7 +459,7 @@
             const src = listaOrc().find((o) => o.id === $('[name=origem]', m.el).value);
             if (src) etapas = copia(src.etapas).map(novosIds);
           }
-          const id = criarOrc(Object.assign({ titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, etapas }, imp));
+          const id = criarOrc(Object.assign({ codigo, titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, etapas }, imp));
           m.fechar();
           location.hash = `#/orcamentos/${id}`;
         },
@@ -1219,7 +1226,7 @@
     return `<div class="o-dados">
       <div class="card"><div class="hd"><h3>Identificação</h3></div><div class="bd"><div class="grid2">
         <label class="f req span2"><span>Obra ou serviço</span><input class="inp" data-o="titulo" value="${esc(o.titulo)}"></label>
-        <label class="f"><span>Número do orçamento</span><input class="inp" data-o="codigo" value="${esc(o.codigo || '')}" placeholder="001/2026"></label>
+        <label class="f"><span>Número do orçamento</span><input class="inp" data-o="codigo" value="${esc(o.codigo || '')}" placeholder="Ex.: SE268.REF" autocapitalize="characters" spellcheck="false"></label>
         <label class="f"><span>Data</span><input class="inp" type="date" data-o="data" value="${esc(o.data || '')}"></label>
         <div class="span2" id="orc-d-cli"></div>
         <label class="f span2"><span>Local da obra</span><input class="inp" data-o="local" id="orc-local" value="${esc(o.local || '')}" placeholder="${esc(cli && cli.endereco ? 'Vazio: usa o endereço do cliente' : 'Endereço da obra')}"></label>
@@ -1275,9 +1282,9 @@
     salvarAgora();
     const o = est.orc;
     const d = copia(o); delete d.id;
-    const id = criarOrc(Object.assign(d, { codigo: proximoCodigo(), titulo: (o.titulo || 'Orçamento') + ' (cópia)', status: 'elaboracao', statusEm: null, data: hojeISO(), etapas: copia(o.etapas).map(novosIds), criadoEm: new Date().toISOString() }));
+    const id = criarOrc(Object.assign(d, { codigo: o.codigo || '', titulo: (o.titulo || 'Orçamento') + ' (cópia)', status: 'elaboracao', statusEm: null, data: hojeISO(), etapas: copia(o.etapas).map(novosIds), criadoEm: new Date().toISOString() }));
     location.hash = `#/orcamentos/${id}`;
-    ui.toast('Orçamento duplicado. Você está na cópia.');
+    ui.toast('Orçamento duplicado com o mesmo número. Se precisar, troque em Dados e condições.');
   }
   async function excluirOrc() {
     const o = est.orc;
@@ -1444,7 +1451,7 @@
       @bottom-left{content:${cssStr(rod)};font-family:"Segoe UI",Arial,sans-serif;font-size:7.5pt;color:#777}
       @bottom-right{content:"Página " counter(page) " de " counter(pages);font-family:"Segoe UI",Arial,sans-serif;font-size:7.5pt;color:#777}}`;
     const tituloAnt = document.title;
-    document.title = `Orçamento ${o.codigo || ''} - ${o.titulo || ''}`.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+    document.title = nomeArquivo(o);
     document.body.classList.add('imprimindo');
     const fim = () => {
       document.body.classList.remove('imprimindo');
@@ -1687,7 +1694,7 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
     if (!o.etapas.length) { ui.toast('A planilha ainda não tem etapas.'); return; }
     try {
       const blob = await gerarXlsx(o);
-      const nome = `Orçamento ${o.codigo || ''} - ${o.titulo || ''}`.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim() + '.xlsx';
+      const nome = nomeArquivo(o) + '.xlsx';
       ui.baixarArquivo(nome, blob);
       ui.toast('Planilha do Excel gerada, com as fórmulas.');
     } catch (e) { console.error(e); ui.toast('Não foi possível gerar a planilha: ' + e.message, 'erro'); }
@@ -1864,7 +1871,7 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
         titulo: 'Importar planilha', sub: esc(f.name),
         corpo: `<div class="o-imp-res"><div><b>${p.etapas.length}</b><span>etapas</span></div><div><b>${c.nItens}</b><span>itens</span></div><div><b>${c.nSub}</b><span>subitens</span></div><div class="w"><b class="n">${brl(c.direto)}</b><span>custo direto</span></div></div>
           ${res.renum.length ? `<p class="small muted">${res.renum.length} ${res.renum.length === 1 ? 'linha tinha numeração diferente e foi renumerada' : 'linhas tinham numeração diferente e foram renumeradas'}: ${res.renum.slice(0, 6).map(([a, b]) => `${esc(a)} → ${esc(b)}`).join(', ')}${res.renum.length > 6 ? '…' : ''}</p>` : ''}
-          <div class="grid2"><label class="f req span2"><span>Obra ou serviço</span><input class="inp" name="titulo" value="${esc(p.titulo)}"></label>
+          <div class="grid2">${campoNumero()}<div></div><label class="f req span2"><span>Obra ou serviço</span><input class="inp" name="titulo" value="${esc(p.titulo)}"></label>
           <div class="span2" id="orc-i-cli"></div>
           <label class="f"><span>Modalidade</span><select class="inp" name="modalidade">${MODALIDADES.map(([k, n]) => `<option value="${k}" ${p.modalidade === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label class="f"><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(p.bdi))}"></label>
@@ -1872,13 +1879,14 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
         aoAbrir: (el) => { sel = Sis.seletorCliente($('#orc-i-cli', el), { rotulo: 'Cliente' }); ligarImposto(el); },
         botoes: [{ rot: 'Cancelar' }, {
           rot: 'Criar orçamento', classe: 'primary', acao: (m) => {
+            const codigo = lerNumeroOrc(m.el); if (!codigo) return;
             const titulo = $('[name=titulo]', m.el).value.trim();
             if (!titulo) { $('[name=titulo]', m.el).classList.add('erro'); return; }
             const erro = sel.validar(); if (erro) { ui.toast(erro); return; }
             const bdi = lerNumero($('[name=bdi]', m.el).value);
             if (!bdi || bdi.v === null) { $('[name=bdi]', m.el).classList.add('erro'); return; }
             const imp = lerImposto(m.el); if (!imp) return;
-            const id = criarOrc(Object.assign({ titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, bdiRotulo: p.bdiRotulo, etapas: p.etapas }, imp, p.impostoRotulo ? { impostoRotulo: p.impostoRotulo } : {}));
+            const id = criarOrc(Object.assign({ codigo, titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, bdiRotulo: p.bdiRotulo, etapas: p.etapas }, imp, p.impostoRotulo ? { impostoRotulo: p.impostoRotulo } : {}));
             m.fechar();
             location.hash = `#/orcamentos/${id}`;
             ui.toast('Planilha importada.');
