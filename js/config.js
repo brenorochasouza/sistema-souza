@@ -5,6 +5,6 @@ window.SOUZA_CONFIG = {
   supabaseUrl: 'https://vbuzdissrgabtvscfhdj.supabase.co',
   supabaseChave: 'sb_publishable_Jcf2-6te7QaT7n522XskHw_LcbDJf9J',
   // Diário de obra: projeto Supabase separado (Project URL e chave publishable)
-  rdoUrl: '',
-  rdoChave: '',
+  rdoUrl: 'https://vtdeumwhmmffzhxhmnur.supabase.co',
+  rdoChave: 'sb_publishable_C5bmB_nPWMFlxmCnDzIa8w_VVzGN02t',
 };
