@@ -146,12 +146,15 @@
     const ativos = g.c.filter((s) => !quitado(s)).sort((a, b) => (proxVenc(a) < proxVenc(b) ? -1 : 1));
     const quites = g.c.filter(quitado);
     const foco = quites.some((s) => (est.contrato && est.contrato.sid === s.id) || est.aExcluir === s.id);
+    // Recusados ficam recolhidos no fim de "Em aberto", como os contratos quitados
+    const focoRec = g.f.some((s) => est.aExcluir === s.id || est.obs[s.id]);
+    if (est.aba === 'f') est.aba = 'a';
+    const recusados = g.f.length ? `<details class="quit" ${focoRec ? 'open' : ''}><summary>${g.f.length} ${g.f.length === 1 ? 'orçamento recusado' : 'orçamentos recusados'}</summary><div class="cl-cards">${g.f.map(card).join('')}</div></details>` : '';
     const VAZIO = {
       v: 'Nenhuma visita na fila. Cadastre um serviço na barra acima.',
       e: 'Nenhum orçamento esperando ser escrito. Quando uma visita for feita, ela aparece aqui.',
       a: 'Nenhum orçamento aguardando resposta.',
       c: 'Nenhum contrato ativo. Ao aprovar um orçamento, você registra o contrato e ele aparece aqui.',
-      f: 'Nenhum orçamento recusado.',
     };
     const col = (k, cls, titulo, n, corpo) => `<section class="cl-col ${cls} ${est.aba === k ? 'sel' : ''}"><div class="cl-coltopo"><h2>${titulo}</h2><span>${n}</span></div>${corpo}</section>`;
     const cartoes = (k) => (g[k].length ? `<div class="cl-cards">${g[k].map(card).join('')}</div>` : `<p class="cl-vazio">${VAZIO[k]}</p>`);
@@ -174,15 +177,14 @@
       </div>
       ${est.rascunho ? htmlNovo() : ''}
       ${fc ? `<div class="filtro">Mostrando só ${esc(fc.nome)}<button data-a="cl-semfiltro" aria-label="Remover filtro">${icone('fechar')}</button></div>` : ''}
-      <nav class="cl-abas">${[['v', 'Visitas', g.v.length], ['e', 'A enviar', g.e.length], ['a', 'Em aberto', g.a.length], ['c', 'Contratos', ativos.length], ['f', 'Recusados', g.f.length]].map(([k, r, n]) => `<button class="cl-aba" data-a="cl-aba" data-k="${k}" aria-selected="${est.aba === k}">${r} ${n}</button>`).join('')}</nav>
+      <nav class="cl-abas">${[['v', 'Visitas', g.v.length], ['e', 'A enviar', g.e.length], ['a', 'Em aberto', g.a.length], ['c', 'Contratos', ativos.length]].map(([k, r, n]) => `<button class="cl-aba" data-a="cl-aba" data-k="${k}" aria-selected="${est.aba === k}">${r} ${n}</button>`).join('')}</nav>
       <div class="cl-board">
         ${col('v', 'v', 'Visitas', g.v.length, cartoes('v'))}
         ${col('e', 'e', 'Orçamentos a enviar', g.e.length, cartoes('e'))}
-        ${col('a', 'a', 'Orçamentos em aberto', g.a.length, cartoes('a'))}
+        ${col('a', 'a', 'Orçamentos em aberto', g.a.length, cartoes('a') + recusados)}
         ${col('c', 'c larga', 'Contratos', ativos.length, (g.c.length ? `<div class="cl-resumo"><div><b>${brl(aReceber)}</b><span>A receber</span></div><div class="vc"><b>${brl(vencido)}</b><span>Vencido</span></div><div class="rc"><b>${brl(recebidoMes)}</b><span>Recebido no mês</span></div></div>` : '')
           + (ativos.length ? `<div class="cl-cards">${ativos.map(contratoHtml).join('')}</div>` : `<p class="cl-vazio">${VAZIO.c}</p>`)
           + (quites.length ? `<details class="quit" ${foco ? 'open' : ''}><summary>${quites.length} ${quites.length === 1 ? 'contrato quitado' : 'contratos quitados'}</summary><div class="cl-cards">${quites.map(contratoHtml).join('')}</div></details>` : ''))}
-        ${col('f', 'f larga', 'Recusados', g.f.length, cartoes('f'))}
       </div>`;
     ligarComando(el);
     if (est.rascunho) ligarNovo(el);
