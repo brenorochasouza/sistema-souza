@@ -1101,6 +1101,9 @@
           <p class="small muted">Esses dados entram como responsável nas obras novas.</p></div></div>
         <div class="card"><div class="hd"><div><h3>Rodapé dos relatórios</h3></div></div><div class="bd"><div class="grid2">
           ${campo('empresa', 'nome', 'Empresa', c.empresa.nome)}${campo('empresa', 'telefone', 'Telefone', c.empresa.telefone)}${campo('empresa', 'email', 'E-mail', c.empresa.email)}${campo('empresa', 'site', 'Site', c.empresa.site)}</div></div></div>
+        <div class="card"><div class="hd"><div><h3>Importar obra</h3><p>Traz uma obra de outro sistema: cadastro, diários e fotos, a partir do pacote .zip de importação.</p></div></div><div class="bd">
+          <div class="actions"><label class="btn">${icone('enviar')}Escolher pacote (.zip)<input type="file" accept=".zip,application/zip" data-importar hidden></label></div>
+          <p class="small muted">Use no computador, com internet, e deixe a tela aberta até as fotos terminarem de subir.</p></div></div>
         <div class="card"><div class="hd"><div><h3>Conexão e espaço</h3></div></div><div class="bd">
           <dl class="kv"><dt>Projeto</dt><dd>${esc(p ? p.url.replace(/^https?:\/\//, '') : '-')}</dd><dt>Conta</dt><dd>${esc(B.conta() || '-')}</dd>
             <dt>Fotos na fila</dt><dd>${f.enviar + f.ponte}</dd><dt>Espaço das fotos</dt><dd id="rdo-espaco">Calculando…</dd></dl>
@@ -1111,9 +1114,132 @@
     B.rpc('rdo_espaco').then((n) => { const e = $('#rdo-espaco'); if (e) { const mb = (Number(n) || 0) / 1048576; e.textContent = `${mb < 10 ? mb.toFixed(1).replace('.', ',') : Math.round(mb)} MB de 1.024 MB (${((mb / 1024) * 100).toFixed(1).replace('.', ',')}%)`; } })
       .catch(() => { const e = $('#rdo-espaco'); if (e) e.textContent = navigator.onLine ? 'Não disponível' : 'Sem internet'; });
   }
+  /* =========================================================
+     Importação de obra (pacote .zip feito a partir de outro sistema)
+     ========================================================= */
+  async function lerZip(arq) {
+    const buf = new Uint8Array(await arq.arrayBuffer());
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let e = buf.length - 22;
+    while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+    if (e < 0) throw new Error('O arquivo não é um .zip válido.');
+    const total = dv.getUint16(e + 10, true);
+    let p = dv.getUint32(e + 16, true);
+    const dec = new TextDecoder();
+    const itens = new Map();
+    for (let i = 0; i < total; i++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('O arquivo .zip está corrompido.');
+      const metodo = dv.getUint16(p + 10, true), tam = dv.getUint32(p + 20, true);
+      const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+      const loc = dv.getUint32(p + 42, true);
+      const nome = dec.decode(buf.subarray(p + 46, p + 46 + nl));
+      const ini = loc + 30 + dv.getUint16(loc + 26, true) + dv.getUint16(loc + 28, true);
+      itens.set(nome, { metodo, dados: buf.subarray(ini, ini + tam) });
+      p += 46 + nl + xl + cl;
+    }
+    return {
+      nomes: [...itens.keys()],
+      async bytes(nome) {
+        const it = itens.get(nome);
+        if (!it) return null;
+        if (it.metodo === 0) return it.dados;
+        if (it.metodo === 8 && typeof DecompressionStream !== 'undefined') {
+          const fluxo = new Blob([it.dados]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+          return new Uint8Array(await new Response(fluxo).arrayBuffer());
+        }
+        throw new Error('Este .zip usa uma compressão que o navegador não abre.');
+      },
+    };
+  }
+  async function importarPacote(arq) {
+    if (!navigator.onLine) { ui.toast('Para importar é preciso internet.'); return; }
+    let z, pac;
+    try {
+      z = await lerZip(arq);
+      const j = z.nomes.find((n) => /\.json$/i.test(n) && !n.includes('/'));
+      pac = j ? JSON.parse(new TextDecoder().decode(await z.bytes(j))) : null;
+    } catch (e) { ui.toast(e.message, 'erro'); return; }
+    if (!pac || pac.tipo !== 'souza-rdo-importacao' || !pac.obra || !pac.obra.id || !Array.isArray(pac.diarios)) { ui.toast('Este arquivo não é um pacote de importação do Diário de obra.', 'erro'); return; }
+    const cfg = cfgRdo();
+    const existe = obra(pac.obra.id);
+    const novos = pac.diarios.filter((d) => !B.store.get('diarios', d.id));
+    const nFotos = novos.reduce((s, d) => s + (d.fotos || []).length, 0);
+    const nAprov = novos.filter((d) => d.dados && d.dados.status === 'aprovado').length;
+    if (existe && !novos.length) { ui.alerta({ titulo: 'Nada para importar', msg: `A obra ${existe.nome} já está aqui com todos os diários deste pacote.` }); return; }
+    const usarAss = !cfg.assinatura && pac.assinatura && z.nomes.includes(pac.assinatura);
+    const avisos = [];
+    if (usarAss) avisos.push('Você ainda não tem assinatura nas configurações: vou usar a assinatura que veio no pacote. Dá para trocar depois.');
+    else if (!cfg.assinatura) avisos.push('Você ainda não enviou a imagem da sua assinatura: os diários aprovados vão sair sem ela.');
+    if (!cfg.ponte.url) avisos.push('A ponte do Google Drive não está configurada: as fotos em alta qualidade sobem para o Drive quando você configurar.');
+    const ok = await ui.confirmar({
+      titulo: `Importar ${pac.obra.nome}?`,
+      msg: `${existe ? 'Esta obra já está aqui. Só entram os diários que ainda não foram importados.\n\n' : ''}${novos.length} diários (${nAprov} aprovados e ${novos.length - nAprov} em rascunho) e ${nFotos} fotos.${avisos.length ? '\n\n' + avisos.join('\n') : ''}\n\nDeixe esta tela aberta até as fotos terminarem de subir.`,
+      ok: 'Importar',
+    });
+    if (!ok) return;
+    const prog = ui.abrirModal({ titulo: 'Importando a obra', corpo: '<p class="msg" data-q="prog">Preparando…</p><div class="r-bar" style="margin-top:10px"><i data-q="barra" style="width:0%"></i></div>' });
+    const passo = (txt, frac) => { const t = $('[data-q=prog]', prog.el), b = $('[data-q=barra]', prog.el); if (t) t.textContent = txt; if (b) b.style.width = `${Math.round(frac * 100)}%`; };
+    try {
+      if (usarAss) {
+        const b = await z.bytes(pac.assinatura);
+        const path = `config/assinatura-${Date.now()}.png`;
+        const url = await B.enviarArquivo(path, new Blob([b], { type: 'image/png' }), 'image/png');
+        const c = cfgRdo(); c.assinatura = url; B.salvarConfig(c);
+      }
+      const cf = cfgRdo();
+      let o = existe;
+      if (!o) {
+        passo('Cadastrando a obra…', 0);
+        o = normalizarObra(Object.assign({}, copia(pac.obra), {
+          responsavel: pac.obra.responsavel || cf.responsavel.nome,
+          assinantes: Object.assign({ fiscal: {}, contratante: {} }, pac.obra.assinantes || {}, { responsavel: Object.assign({}, cf.responsavel) }),
+          acessos: { cliente: gerarCodigo(), fiscal: gerarCodigo(), contratante: gerarCodigo() },
+          criadoEm: new Date().toISOString(),
+        }));
+        if (o.clienteId && !Sis.clientes.get(o.clienteId)) { const c = pac.clienteNome && Sis.clientes.porNome(pac.clienteNome); o.clienteId = c ? c.id : ''; }
+        if (pac.logo && z.nomes.includes(pac.logo)) {
+          try {
+            const b = await z.bytes(pac.logo);
+            const path = `obras/${o.id}/logo-${Date.now()}.png`;
+            o.logoCliente = { path, url: await B.enviarArquivo(path, new Blob([b], { type: 'image/png' }), 'image/png') };
+          } catch (e) { ui.toast('A logo do cliente não subiu: ' + e.message, 'erro'); }
+        }
+        salvarObra(o);
+      }
+      const aprovador = Object.assign({}, cf.responsavel, o.assinantes.responsavel && o.assinantes.responsavel.nome ? o.assinantes.responsavel : {}, { assinatura: cf.assinatura });
+      let feitas = 0;
+      for (const [i, pd] of novos.entries()) {
+        const d = Object.assign({ clima: { manha: {}, tarde: {}, chuvaMm: null }, mao: {}, equip: {}, atividades: [], ocorrencias: [], obs: '' }, copia(pd.dados), { id: pd.id, obraId: o.id, fotos: [] });
+        if (d.status === 'aprovado') { d.aprovador = Object.assign({}, aprovador); if (!d.aprovadoEm) d.aprovadoEm = new Date().toISOString(); }
+        const fila = [];
+        for (const pf of pd.fotos || []) {
+          passo(`RDO nº ${d.numero}: foto ${fila.length + 1} de ${(pd.fotos || []).length}`, (i + fila.length / Math.max(1, (pd.fotos || []).length)) / novos.length);
+          const b = await z.bytes(pf.arquivo);
+          if (!b) continue;
+          const original = new Blob([b], { type: 'image/jpeg' });
+          const red = await reduzir(original, 1280, 'image/jpeg', 0.72);
+          const path = `${o.id}/${d.id}/${pf.id}.jpg`;
+          d.fotos.push({ id: pf.id, servicoId: pf.servicoId || '', legenda: pf.legenda || '', path, w: red.w, h: red.h, drive: null, em: pf.em || new Date().toISOString() });
+          fila.push({ id: pf.id, obraId: o.id, diarioId: d.id, path, print: red.blob, original, tipo: 'image/jpeg' });
+        }
+        gravarDiario(d);
+        for (const x of fila) await B.fotos.adicionar(x);
+        feitas += fila.length;
+      }
+      prog.fechar();
+      ui.toast(`${pac.obra.nome}: ${novos.length} diários e ${feitas} fotos importados. As fotos estão subindo.`);
+      B.sync.agora();
+      location.hash = `#/rdo/${o.id}`;
+    } catch (e) {
+      prog.fechar();
+      ui.alerta({ titulo: 'A importação parou', msg: `${e.message || e}\n\nO que já entrou fica salvo. Escolha o mesmo pacote de novo para continuar de onde parou.` });
+    }
+  }
+
   document.addEventListener('change', async (ev) => {
     const t = ev.target;
     if (!t.dataset) return;
+    if (t.matches && t.matches('[data-importar]') && t.files && t.files[0]) { const arq = t.files[0]; t.value = ''; importarPacote(arq); return; }
     if (t.dataset.cf) {
       const [g, k] = t.dataset.cf.split('.');
       const c = cfgRdo();

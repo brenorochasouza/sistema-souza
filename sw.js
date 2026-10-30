@@ -1,12 +1,12 @@
 /* Guarda uma cópia do sistema no aparelho para abrir sem internet.
    Com internet, sempre busca a versão mais nova e atualiza a cópia. */
-const CACHE = 'souza-1.2.5';
+const CACHE = 'souza-1.2.6';
 const ARQUIVOS = [
   './', 'index.html', 'manifest.webmanifest',
-  'css/estilo.css?v=1.2.5',
-  'js/config.js?v=1.2.5', 'js/nucleo.js?v=1.2.5', 'js/inicio.js?v=1.2.5', 'js/agenda.js?v=1.2.5',
-  'js/clientes.js?v=1.2.5', 'js/orcamentos.js?v=1.2.5', 'js/renovacoes.js?v=1.2.5', 'js/obras.js?v=1.2.5', 'js/rdo-relatorio.js?v=1.2.5', 'js/rdo-dados.js?v=1.2.5', 'js/rdo.js?v=1.2.5', 'js/configuracoes.js?v=1.2.5',
-  'img/logo.png?v=1.2.5', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
+  'css/estilo.css?v=1.2.6',
+  'js/config.js?v=1.2.6', 'js/nucleo.js?v=1.2.6', 'js/inicio.js?v=1.2.6', 'js/agenda.js?v=1.2.6',
+  'js/clientes.js?v=1.2.6', 'js/orcamentos.js?v=1.2.6', 'js/renovacoes.js?v=1.2.6', 'js/obras.js?v=1.2.6', 'js/rdo-relatorio.js?v=1.2.6', 'js/rdo-dados.js?v=1.2.6', 'js/rdo.js?v=1.2.6', 'js/configuracoes.js?v=1.2.6',
+  'img/logo.png?v=1.2.6', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
   'fonts/instrument-sans-latin-400-normal.woff2', 'fonts/instrument-sans-latin-500-normal.woff2', 'fonts/instrument-sans-latin-600-normal.woff2',
   'fonts/instrument-sans-latin-ext-400-normal.woff2', 'fonts/instrument-sans-latin-ext-500-normal.woff2', 'fonts/instrument-sans-latin-ext-600-normal.woff2',
 ];

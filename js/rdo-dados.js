@@ -361,6 +361,7 @@ window.RDOB = (function () {
     async processar() {
       if (F.rodando || !S.sessao || !S.sb || !navigator.onLine || !F.recs.size) return;
       F.rodando = true;
+      const inicio = new Set(F.recs.keys());
       try {
         const cfg = config();
         for (const meta of [...F.recs.values()]) {
@@ -418,6 +419,8 @@ window.RDOB = (function () {
       } finally {
         F.rodando = false;
         avisarEstado();
+        // fotos que entraram na fila durante o envio (importação, várias fotos de uma vez)
+        if (!F.erro && navigator.onLine && [...F.recs.keys()].some((k) => !inicio.has(k))) setTimeout(() => fotos.processar(), 500);
       }
     },
   };

@@ -14,7 +14,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = '../img/logo.png?v=1.2.5';
+  const LOGO = '../img/logo.png?v=1.2.6';
   const PAPEL = { cliente: 'Cliente', fiscal: 'Fiscal da obra', contratante: 'Contratante' };
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
