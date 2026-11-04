@@ -874,6 +874,9 @@ textarea.o-in{resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:any
 .o-obs-b .rot{font-size:12px;font-weight:600;margin-top:7px;flex:none}
 .o-obs-b .o-in{font-size:13px;color:var(--ink-2);font-style:italic;min-height:29px}
 .o-obs.o-sub .o-obs-b{margin-left:20px}
+.o-obs-et td{padding-top:4px}
+.o-ce-ob{display:flex;align-items:flex-start;gap:6px;width:100%;text-align:left;padding:8px 12px;background:#FFF7F8;border:0;border-bottom:1px solid var(--brand-100);color:var(--brand-700);font:inherit;font-size:12.5px;font-style:italic;cursor:pointer}
+.o-ce-ob .ic{width:14px;height:14px;margin-top:2px;flex:none}
 .o-add-et{all:unset;cursor:pointer;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:12px;padding:12px;border:1.5px dashed var(--line-2);border-radius:var(--radius);color:var(--muted);font-weight:500;font-size:13.5px}
 .o-add-et:hover{border-color:var(--brand);color:var(--brand-700);background:#fff}
 .o-add-et .ic{width:16px;height:16px}

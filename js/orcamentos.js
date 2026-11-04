@@ -614,6 +614,11 @@
         <td colspan="6"><input class="o-in o-et-tit" data-f="titulo" data-e="${e.id}" value="${esc(e.titulo)}" placeholder="Nome da etapa" autocomplete="off"${rec ? ` title="${e.itens.length} ${e.itens.length === 1 ? 'item' : 'itens'} recolhidos"` : ''}></td>
         <td class="num o-tot" data-t="${e.id}" data-k="e">${totEtapa(r, c)}</td>
         <td class="o-ac"><button class="btn icon o-mn" data-a="orc-menu" data-k="etapa" data-e="${e.id}" aria-label="Opções da etapa ${n}">${icone('pontos')}</button></td></tr>`;
+    if (!rec && e.obs != null) {
+      h += `<tr class="o-obs o-obs-et" data-eo="${e.id}"><td></td><td colspan="7"><div class="o-obs-b">${icone('balao')}<span class="rot">Observação da etapa</span>
+        <textarea class="o-in o-auto" data-f="obs" data-e="${e.id}" rows="1" placeholder="Escreva a observação desta etapa">${esc(e.obs)}</textarea></div></td>
+        <td class="o-ac"><button class="btn icon" data-a="orc-obs-et-x" data-e="${e.id}" aria-label="Remover observação da etapa" title="Remover observação">${icone('fechar')}</button></td></tr>`;
+    }
     if (!rec) {
       e.itens.forEach((l, j) => {
         h += linhaPC(l, `${n}.${j + 1}`, 'item', c);
@@ -648,6 +653,7 @@
         <div class="o-ce-h"><button class="o-ce-tit" data-a="orc-rec" data-e="${e.id}" aria-expanded="${!rec}"><span class="o-badge">${n}</span><span class="nm">${esc(e.titulo || 'Etapa sem nome')}</span></button>
           <span class="o-ce-tot" data-t="${e.id}" data-k="e">${totEtapa(r, c)}</span>
           <button class="btn icon" data-a="orc-menu" data-k="etapa" data-e="${e.id}" aria-label="Opções da etapa ${n}">${icone('pontos')}</button></div>`;
+      if (!rec && e.obs) h += `<button class="o-ce-ob" data-a="orc-obs-et" data-e="${e.id}">${icone('balao')}<span>${esc(e.obs)}</span></button>`;
       if (!rec) {
         h += '<div class="o-ce-l">';
         e.itens.forEach((l, j) => {
@@ -890,6 +896,11 @@
     popover(el, [
       { rot: 'Adicionar item', ic: 'mais', acao: () => addItem(eid) },
       { rot: 'Renomear etapa', ic: 'editar', acao: () => renomearEtapa(eid) },
+      ...(o.etapas[i].obs == null || (est.cel && !o.etapas[i].obs)
+        ? [{ rot: 'Adicionar observação', ic: 'balao', acao: () => obsEtapa(eid) }]
+        : est.cel
+        ? [{ rot: 'Editar observação', ic: 'balao', acao: () => obsEtapa(eid) }, { rot: 'Remover observação', ic: 'fechar', acao: () => obsEtapa(eid, true) }]
+        : [{ rot: 'Remover observação', ic: 'balao', acao: () => obsEtapa(eid, true) }]),
       { rot: 'Inserir etapa abaixo', ic: 'mais', acao: () => addEtapa(eid) },
       { rot: 'Duplicar etapa', ic: 'copiar', acao: () => duplicarEtapa(eid) },
       '-',
@@ -1051,6 +1062,22 @@
     if (!est.cel) { const i = $(`input[data-e="${eid}"]`); if (i) { i.focus(); i.select(); } return; }
     const e = acharEtapa(est.orc, eid); if (!e) return;
     pedirNomeEtapa('Renomear etapa', e.titulo, (t) => mudar((o) => { acharEtapa(o, eid).titulo = t; }));
+  }
+  /** Observação da etapa: sai logo abaixo do nome da etapa, na tela, na impressão e no Excel. */
+  function obsEtapa(eid, remover = false) {
+    const e = acharEtapa(est.orc, eid); if (!e) return;
+    if (remover) { mudar((o) => { delete acharEtapa(o, eid).obs; }); return; }
+    if (!est.cel) {
+      est.recolhidas.delete(eid);
+      mudar((o) => { const x = acharEtapa(o, eid); if (x.obs == null) x.obs = ''; }, { foco: `tr.o-obs-et[data-eo="${eid}"] textarea` });
+      return;
+    }
+    ui.abrirModal({
+      titulo: 'Observação da etapa', sub: esc(e.titulo || ''), folha: true,
+      corpo: `<label class="f"><span>Observação</span><textarea class="inp" name="obs" rows="4" placeholder="Sai logo abaixo do nome da etapa">${esc(e.obs || '')}</textarea></label>`,
+      aoAbrir: (el) => { setTimeout(() => $('[name=obs]', el).focus(), 60); },
+      botoes: [{ rot: 'Cancelar' }, { rot: 'Salvar', classe: 'primary', acao: (m) => { const v = $('[name=obs]', m.el).value.trim(); m.fechar(); mudar((o) => { const x = acharEtapa(o, eid); if (v) x.obs = v; else delete x.obs; }); } }],
+    });
   }
   function duplicarEtapa(eid) {
     mudar((o) => { const i = o.etapas.findIndex((e) => e.id === eid); const n = novosIds(copia(o.etapas[i])); n.titulo = (n.titulo + ' (cópia)').trim(); o.etapas.splice(i + 1, 0, n); });
@@ -1330,6 +1357,8 @@
   A['orc-refazer'] = () => refazer();
   A['orc-editar'] = (el) => editarLinha(el.dataset.l);
   A['orc-obs-x'] = (el) => alternarObs(el.dataset.l);
+  A['orc-obs-et-x'] = (el) => obsEtapa(el.dataset.e, true);
+  A['orc-obs-et'] = (el) => obsEtapa(el.dataset.e);
   matchMedia(MQ_CEL).addEventListener('change', () => { if (Sis.rota().mod === 'orcamentos' && $('.o-ed') && !ui.modalAberto()) pintar(); });
 
   /* =========================================================
@@ -1444,6 +1473,7 @@
     o.etapas.forEach((et, i) => {
       const n = i + 1, re = V.m.get(et.id);
       corpo += `<tbody><tr class="pe-et"><td class="c-i">${n}</td><td colspan="${nc - 1}">${esc(et.titulo)}</td></tr>`;
+      if (et.obs) corpo += `<tr class="pe-obs pe-obs-et"><td></td><td colspan="${nc - 1}"><b>Observação:</b> ${esc(et.obs)}</td></tr>`;
       et.itens.forEach((l, j) => {
         corpo += linha(l, `${n}.${j + 1}`, false);
         if (temSub(l)) l.sub.forEach((s, k) => { corpo += linha(s, `${n}.${j + 1}.${k + 1}`, true); });
@@ -1640,6 +1670,7 @@
       const n = i + 1;
       add([cel.n('B', n, X.etN), cel.t('C', et.titulo, X.etT), ...COLS.slice(2).map((c) => cel.e(c, X.etT))], 19);
       merges.push(`C${r - 1}:K${r - 1}`);
+      linhaObs(et);
       const nivel1 = [];
       et.itens.forEach((l, j) => {
         const num = `${n}.${j + 1}`;
@@ -1856,7 +1887,8 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       if (!it && !ds) continue;
       const rot = it || ds;
       if (/^observa/i.test(rot)) {
-        if (ultimo) ultimo.obs = txt(rot.replace(/^observa[çc][ãa]o\s*:?\s*/i, ''));
+        const tObs = txt(rot.replace(/^observa[çc][ãa]o\s*:?\s*/i, ''));
+        if (ultimo) ultimo.obs = tObs; else if (etapa) etapa.obs = tObs;
         continue;
       }
       if (/imposto/i.test(rot) && !/bdi/i.test(rot) && !ds) {
