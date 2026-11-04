@@ -31,6 +31,7 @@
     mover: '<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>',
     etiqueta: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1"/>',
     porcento: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+    arrastar: '<circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.4" fill="currentColor" stroke="none"/>',
   });
 
   /* ---------------- constantes ---------------- */
@@ -634,7 +635,7 @@
     const r = c.m.get(l.id), g = nivel === 'item' && temSub(l);
     const cls = ['o-it', nivel === 'sub' ? 'o-sub' : '', g ? 'o-grp' : '', l.neg ? 'o-neg' : ''].filter(Boolean).join(' ');
     const inpN = (f, fmt) => `<td class="o-c"><input class="o-in num" data-f="${f}" inputmode="decimal" autocomplete="off" value="${esc(fmt(l[f]))}"${f === 'qtd' && l.qf ? ` title="Memória de cálculo: ${esc(l.qf)}"` : ''}></td>`;
-    let h = `<tr class="${cls}" data-l="${l.id}"><td class="o-n">${num}</td>
+    let h = `<tr class="${cls}" data-l="${l.id}"><td class="o-n"><span class="o-arr" data-arr="${l.id}" title="Arraste para mudar a posição">${icone('arrastar')}</span>${num}</td>
       <td class="o-dc"><div class="sugere"><textarea class="o-in o-desc o-auto" data-f="desc" rows="1" placeholder="${g ? 'Descrição do item' : 'Descrição do serviço'}">${esc(l.desc)}</textarea><div class="lista-sug o-sugs" hidden></div></div></td>`;
     if (g) h += `<td colspan="4" class="o-gcel"><span class="o-gdet" data-g="${l.id}">${l.sub.length} ${l.sub.length === 1 ? 'subitem' : 'subitens'}</span><button class="o-addb" data-a="orc-add-sub" data-l="${l.id}">${icone('mais')}Subitem</button></td><td class="o-pu"></td>`;
     else h += `${inpN('qtd', fq)}<td class="o-c"><input class="o-in o-un" data-f="un" list="orc-uns" autocomplete="off" value="${esc(l.un)}" aria-label="Unidade"></td>${inpN('mat', fv)}${inpN('mdo', fv)}<td class="num o-pu" data-u="${l.id}">${r.unit == null ? '' : fv(r.unit)}</td>`;
@@ -673,7 +674,7 @@
       : l.neg ? 'Valores a negociar'
         : [vazio(l.qtd) ? '' : `${fq(l.qtd)} ${l.un || ''}`.trim(), r.unit != null ? `x ${fv(r.unit)}` : ''].filter(Boolean).join(' ');
     return `<button class="o-cl ${sub ? 'sub' : ''} ${g ? 'grp' : ''}" data-a="orc-editar" data-l="${l.id}">
-      <span class="n">${num}</span><span class="d"><span class="tx">${esc(l.desc || 'Sem descrição')}</span>${det ? `<small>${esc(det)}</small>` : ''}${l.obs ? `<small class="ob">${icone('balao')}${esc(l.obs)}</small>` : ''}</span>
+      <span class="o-arr" data-arr="${l.id}" aria-label="Arrastar para mudar a posição">${icone('arrastar')}</span><span class="n">${num}</span><span class="d"><span class="tx">${esc(l.desc || 'Sem descrição')}</span>${det ? `<small>${esc(det)}</small>` : ''}${l.obs ? `<small class="ob">${icone('balao')}${esc(l.obs)}</small>` : ''}</span>
       <span class="t" data-t="${l.id}">${totHTML(r)}</span></button>`;
   }
 
@@ -1011,6 +1012,148 @@
       anterior.sub.push(l);
     }, { foco: est.cel ? null : focoDesc(id) });
   }
+  /* ---------- arrastar itens para mudar a posição ----------
+     Item vai para qualquer posição de qualquer etapa; item sem subitens também pode entrar num grupo
+     (vira subitem) e subitem pode sair do grupo (vira item). Item com subitens leva os subitens junto. */
+  const ARR = { on: false };
+  const linhasDom = (id) => [...document.querySelectorAll(est.cel ? `#orc-plan .o-cl[data-l="${id}"]` : `#orc-plan tr[data-l="${id}"]`)];
+  const caixa = (els) => {
+    const rs = els.map((e) => e.getBoundingClientRect()).filter((r) => r.height);
+    return rs.length ? { top: Math.min(...rs.map((r) => r.top)), bottom: Math.max(...rs.map((r) => r.bottom)), left: Math.min(...rs.map((r) => r.left)), right: Math.max(...rs.map((r) => r.right)) } : null;
+  };
+  /** Onde a linha arrastada entraria com o ponteiro na altura y: { e, pai, idx, y, x0, x1 }. */
+  function alvoArraste(y) {
+    const o = est.orc, id = ARR.id, levaSub = temSub(ARR.linha);
+    const conts = o.etapas.map((e) => ({ e, el: document.querySelector(`#orc-plan [data-e="${e.id}"]${est.cel ? '.o-ce' : '.o-etapa'}`) })).filter((c) => c.el);
+    if (!conts.length) return null;
+    let c = conts.find((x) => { const r = x.el.getBoundingClientRect(); return y >= r.top && y <= r.bottom; });
+    if (!c) c = y < conts[0].el.getBoundingClientRect().top ? conts[0] : conts[conts.length - 1];
+    const rc = c.el.getBoundingClientRect();
+    const fim = (x0) => ({ x0, x1: rc.right - 8 });
+    const cab = c.el.querySelector(est.cel ? '.o-ce-h' : 'tr.o-et').getBoundingClientRect();
+    if (est.recolhidas.has(c.e.id)) return { e: c.e.id, pai: null, idx: c.e.itens.filter((l) => l.id !== id).length, y: cab.bottom, ...fim(rc.left + 8), rec: true };
+    const itens = c.e.itens.filter((l) => l.id !== id);
+    let idx = 0, yLinha = cab.bottom;
+    for (const l of itens) {
+      const els = linhasDom(l.id), principal = caixa(els.slice(0, 1));
+      const bloco = caixa([...els, ...(temSub(l) ? l.sub.filter((s) => s.id !== id).flatMap((s) => linhasDom(s.id)) : [])]);
+      if (!principal || !bloco) continue;
+      const meio = (principal.top + principal.bottom) / 2;
+      if (!levaSub && temSub(l) && y >= meio && y <= bloco.bottom) {
+        const subs = l.sub.filter((s) => s.id !== id);
+        let k = 0, ys = principal.bottom;
+        for (const s of subs) {
+          const b = caixa(linhasDom(s.id)); if (!b) continue;
+          if (y < (b.top + b.bottom) / 2) { ys = b.top; break; }
+          k++; ys = b.bottom;
+        }
+        return { e: c.e.id, pai: l.id, idx: k, y: ys, ...fim(rc.left + (est.cel ? 30 : 34)) };
+      }
+      if (y < (temSub(l) ? meio : (bloco.top + bloco.bottom) / 2)) { yLinha = bloco.top; return { e: c.e.id, pai: null, idx, y: yLinha, ...fim(rc.left + 8) }; }
+      idx++; yLinha = bloco.bottom;
+    }
+    return { e: c.e.id, pai: null, idx, y: yLinha, ...fim(rc.left + 8) };
+  }
+  function iniciarArraste(id, ev, alca) {
+    const p = acharLinha(est.orc, id); if (!p) return;
+    Object.assign(ARR, { on: false, id, linha: p.linha, x: ev.clientX, y: ev.clientY, y0: ev.clientY, alvo: null, pid: ev.pointerId, alca });
+    try { alca.setPointerCapture(ev.pointerId); } catch (e) { /* sem captura */ }
+    window.addEventListener('pointermove', moverArraste);
+    window.addEventListener('pointerup', soltarArraste);
+    window.addEventListener('pointercancel', cancelarArraste);
+    window.addEventListener('keydown', teclaArraste);
+  }
+  function comecarDeVerdade() {
+    ARR.on = true;
+    const ids = [ARR.id, ...(temSub(ARR.linha) ? ARR.linha.sub.map((s) => s.id) : [])];
+    ARR.els = ids.flatMap(linhasDom);
+    ARR.els.forEach((e) => e.classList.add('o-arrastado'));
+    document.body.classList.add('o-arrastando');
+    const num = numeroDe(est.orc, ARR.id);
+    ARR.fant = document.createElement('div');
+    ARR.fant.className = 'o-fant';
+    ARR.fant.innerHTML = `<b>${esc(num)}</b> ${esc(ARR.linha.desc || 'Sem descrição')}${temSub(ARR.linha) ? ` <small>com ${ARR.linha.sub.length} ${ARR.linha.sub.length === 1 ? 'subitem' : 'subitens'}</small>` : ''}`;
+    ARR.ind = document.createElement('div');
+    ARR.ind.className = 'o-ind';
+    document.body.append(ARR.fant, ARR.ind);
+    const passo = () => {
+      if (!ARR.on) return;
+      const m = 70, v = ARR.y < m ? -Math.ceil((m - ARR.y) / 5) : ARR.y > innerHeight - m ? Math.ceil((ARR.y - innerHeight + m) / 5) : 0;
+      if (v) window.scrollBy(0, v);
+      desenharArraste();
+      ARR.raf = requestAnimationFrame(passo);
+    };
+    ARR.raf = requestAnimationFrame(passo);
+  }
+  function desenharArraste() {
+    ARR.fant.style.transform = `translate(${ARR.x + 14}px, ${ARR.y - 12}px)`;
+    const a = alvoArraste(ARR.y);
+    ARR.alvo = a;
+    if (!a) { ARR.ind.hidden = true; return; }
+    ARR.ind.hidden = false;
+    ARR.ind.classList.toggle('sub', !!a.pai);
+    ARR.ind.classList.toggle('rec', !!a.rec);
+    Object.assign(ARR.ind.style, { top: `${a.y - 1.5}px`, left: `${a.x0}px`, width: `${Math.max(40, a.x1 - a.x0)}px` });
+  }
+  function moverArraste(ev) {
+    if (ev.pointerId !== ARR.pid) return;
+    ARR.x = ev.clientX; ARR.y = ev.clientY;
+    if (!ARR.on) { if (Math.abs(ev.clientY - ARR.y0) < 5) return; comecarDeVerdade(); }
+    ev.preventDefault();
+  }
+  function encerrarArraste() {
+    cancelAnimationFrame(ARR.raf);
+    window.removeEventListener('pointermove', moverArraste);
+    window.removeEventListener('pointerup', soltarArraste);
+    window.removeEventListener('pointercancel', cancelarArraste);
+    window.removeEventListener('keydown', teclaArraste);
+    (ARR.els || []).forEach((e) => e.classList.remove('o-arrastado'));
+    document.body.classList.remove('o-arrastando');
+    if (ARR.fant) ARR.fant.remove();
+    if (ARR.ind) ARR.ind.remove();
+    const estava = ARR.on;
+    Object.assign(ARR, { on: false, els: null, fant: null, ind: null });
+    return estava;
+  }
+  function cancelarArraste() { encerrarArraste(); }
+  function teclaArraste(ev) { if (ev.key === 'Escape') { ev.preventDefault(); encerrarArraste(); } }
+  function soltarArraste(ev) {
+    if (ev.pointerId !== ARR.pid) return;
+    if (ARR.on) desenharArraste();
+    const a = ARR.alvo, id = ARR.id;
+    if (!encerrarArraste() || !a) return;
+    soltarLinha(id, a);
+  }
+  /** Move a linha para o alvo (índices contados sem a própria linha). */
+  function soltarLinha(id, a) {
+    const p = acharLinha(est.orc, id); if (!p) return;
+    if (a.pai && temSub(p.linha)) return;
+    const igual = a.pai ? p.pai && p.pai.id === a.pai && p.idx === a.idx : !p.pai && p.etapa.id === a.e && p.idx === a.idx;
+    if (igual) return;
+    const de = p.pai ? 'sub' : 'item';
+    mudar((o) => {
+      const q = acharLinha(o, id);
+      const [l] = q.lista.splice(q.idx, 1);
+      if (q.pai) limparGrupo(q.pai);
+      if (a.pai) acharLinha(o, a.pai).linha.sub.splice(a.idx, 0, l);
+      else acharEtapa(o, a.e).itens.splice(a.idx, 0, l);
+    }, { foco: null });
+    const num = numeroDe(est.orc, id);
+    if (a.rec) ui.toast(`Item movido para o fim da etapa ${num.split('.')[0]}.`);
+    else if (de === 'item' && a.pai) ui.toast(`Agora é o subitem ${num}.`);
+    else if (de === 'sub' && !a.pai) ui.toast(`Agora é o item ${num}.`);
+    const el = linhasDom(id)[0];
+    if (el) { el.classList.add('o-solto'); setTimeout(() => el.classList.remove('o-solto'), 900); }
+  }
+  document.addEventListener('pointerdown', (ev) => {
+    const h = ev.target.closest && ev.target.closest('#orc-plan [data-arr]');
+    if (!h || !est.orc || ev.button > 0 || ARR.id && ARR.on) return;
+    ev.preventDefault();
+    iniciarArraste(h.dataset.arr, ev, h);
+  });
+  // a alça não abre a edição do item (no celular a linha inteira é um botão)
+  document.addEventListener('click', (ev) => { if (ev.target.closest && ev.target.closest('#orc-plan [data-arr]')) { ev.preventDefault(); ev.stopPropagation(); } }, true);
+
   function avancar(id) {
     const p = acharLinha(est.orc, id); if (!p || !p.pai) return;
     mudar((o) => {
