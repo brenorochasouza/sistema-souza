@@ -55,7 +55,16 @@
   const CONFIG_PADRAO = { bdi: 36, bdiRotulo: 'BDI + LUCRO + IMPOSTO', imposto: 0, impostoBase: 'custo_bdi', impostoRotulo: 'IMPOSTOS', validade: 30, observacoes: '' };
   /** Base do imposto na obra por preço global. */
   const BASES_IMP = [['custo_bdi', 'Custo direto + BDI'], ['custo', 'Só o custo direto']];
-  const IMPRESSAO_PADRAO = { orientacao: 'paisagem', quantitativo: 'mostrar', colunas: 'completa', bdi: 'separado', resumo: true, obs: true, assinatura: true, extenso: true };
+  const IMPRESSAO_PADRAO = { orientacao: 'paisagem', quantitativo: 'mostrar', precos: 'separado', totaisItem: true, bdi: 'separado', resumo: true, obs: true, assinatura: true, extenso: true };
+  /** Opções de impressão salvas no orçamento (aceita o formato antigo, com "colunas"). */
+  function opImpressao(salvas) {
+    const v = Object.assign({}, salvas || {});
+    if (!v.precos && v.colunas === 'resumida') v.precos = 'unitario';
+    delete v.colunas;
+    const op = Object.assign({}, IMPRESSAO_PADRAO, v);
+    if (!['separado', 'coluna', 'embutido'].includes(op.bdi)) op.bdi = 'separado';
+    return op;
+  }
   const ID_CONFIG = 'config';
 
   /* ---------------- números ---------------- */
@@ -156,7 +165,7 @@
     o.imposto = vazio(o.imposto) ? 0 : Number(o.imposto);
     o.impostoBase = o.impostoBase === 'custo' ? 'custo' : 'custo_bdi';
     o.impostoRotulo = o.impostoRotulo || CONFIG_PADRAO.impostoRotulo;
-    o.impressao = Object.assign({}, IMPRESSAO_PADRAO, o.impressao || {});
+    o.impressao = opImpressao(o.impressao);
     return o;
   }
   const registro = (id) => { const r = store.get(T, id); return r && r.tipo === 'orcamento' ? r : null; };
@@ -1359,31 +1368,74 @@
     return { m, tm: t.tm, td: t.td, direto: t.tot, bdi, imposto, final: t.tot + bdi + imposto };
   }
 
+  /** Colunas da planilha impressa. Na folha em pé os títulos usam siglas, explicadas na legenda. */
+  function colunasImp(o, op) {
+    const semQ = op.quantitativo === 'ocultar', sep = !semQ && op.precos !== 'unitario';
+    const bcol = op.bdi === 'coluna', ret = op.orientacao === 'retrato';
+    const bt = bdiTxt(o);
+    const C = [];
+    const add = (k, nome, sigla, w, cls = '') => C.push({ k, tit: ret ? sigla : nome, cls, w });
+    add('i', 'Item', 'Item', ret ? 5.5 : 4.5, 'c-i');
+    add('d', 'Descrição dos serviços', 'Descrição dos serviços', 0);
+    if (!semQ) {
+      add('q', 'Quant.', 'Qtd.', ret ? 7 : 6, 'num c-q');
+      add('u', 'Unid.', 'Un.', ret ? 5.6 : 4.5, 'c-u');
+      if (sep) {
+        add('mu', 'Material', 'MAT', ret ? 7.6 : 7.5, 'num');
+        add('du', 'Mão de obra', 'MO', ret ? 7.6 : 7.5, 'num');
+        if (op.totaisItem) { add('tm', 'Total material', 'Tot. MAT', ret ? 8.8 : 8.5, 'num'); add('td', 'Total mão de obra', 'Tot. MO', ret ? 8.8 : 8.5, 'num'); }
+      }
+      add('pu', bcol ? 'Preço unit. s/ BDI' : 'Preço unit.', 'P. unit.', ret ? 8 : 8, 'num');
+    } else if (bcol) add('v', 'Valor s/ BDI', 'Valor', ret ? 14 : 12, 'num');
+    if (bcol) add('b', `BDI (${bt})`, `BDI (${bt})`, semQ ? (ret ? 12 : 11) : ret ? 8.4 : 7.5, 'num');
+    add('t', bcol ? 'Total c/ BDI' : semQ ? 'Valor' : 'Total', 'Total', semQ ? (ret ? 16 : 14) : ret ? 9.6 : 9, 'num pe-t');
+    C.find((c) => c.k === 'd').w = Math.max(16, 100 - C.reduce((x, c) => x + c.w, 0));
+    const ks = new Set(C.map((c) => c.k));
+    const leg = !ret ? [] : [
+      ks.has('mu') && 'MAT e MO: preço unitário de material e de mão de obra',
+      ks.has('tm') && 'Tot. MAT e Tot. MO: total de material e de mão de obra do item',
+      ks.has('pu') && (bcol ? 'P. unit.: preço unitário sem BDI' : ks.has('mu') ? 'P. unit.: preço unitário (MAT + MO)' : ''),
+      ks.has('v') && 'Valor: valor do item sem BDI',
+      ks.has('b') && `BDI (${bt}): valor do BDI de cada item`,
+      bcol && 'Total: valor com BDI',
+    ].filter(Boolean);
+    return { C, ks, semQ, sep, bcol, leg };
+  }
+
   function htmlImpressao(o, op) {
     const cfg = config(), e = cfg.empresa;
-    const emb = op.bdi === 'embutido', semQ = op.quantitativo === 'ocultar', completa = !semQ && op.colunas !== 'resumida';
+    const emb = op.bdi === 'embutido';
+    const { C, semQ, bcol, leg } = colunasImp(o, op);
     const imp = comImposto(o);
     const incl = imp ? `BDI de ${bdiTxt(o)} e imposto de ${impTxt(o)} inclusos` : `BDI de ${bdiTxt(o)} incluso`;
     const V = valoresSaida(o, emb);
+    const tb = bcol ? taxas(o).b : 0;
     const cli = clientes.get(o.clienteId);
     const local = o.local || (cli && cli.endereco) || '';
-    const nc = semQ ? 3 : completa ? 10 : 6;
+    const nc = C.length;
     const negc = '<span class="pe-neg">A negociar</span>';
     const tot = (r) => (r.neg ? negc : fv(r.tot));
+    /** Valores das colunas de soma (grupo de subitens, subtotal da etapa). */
+    const somas = (r) => ({ tm: fv(r.tm), td: fv(r.td), v: r.neg ? '' : fv(r.tot), b: r.neg ? '' : fv(r.tot * tb), t: r.neg ? negc : bcol ? fv(r.tot * (1 + tb)) : fv(r.tot) });
+    const agregada = (cls, num, texto, vals) => {
+      const resto = C.slice(1);
+      let n = 0;
+      while (n < resto.length - 1 && !(resto[n].k in vals) && resto[n].k !== 't') n++;
+      n = Math.max(1, n);
+      return `<tr class="${cls}"><td class="c-i">${num}</td><td colspan="${n}">${texto}</td>`
+        + resto.slice(n).map((c) => `<td class="${c.cls.includes('num') ? 'num' : ''}">${c.k in vals ? vals[c.k] : ''}</td>`).join('') + '</tr>';
+    };
     const linha = (l, num, sub) => {
       const r = V.m.get(l.id), g = !sub && temSub(l);
       let h;
-      if (semQ) {
-        h = `<tr class="${g ? 'pe-grp' : sub ? 'pe-sub' : 'pe-it'}"><td class="c-i">${num}</td><td class="pe-d">${esc(l.desc)}</td><td class="num pe-t">${tot(r)}</td></tr>`;
-      } else if (g) {
-        h = completa
-          ? `<tr class="pe-grp"><td class="c-i">${num}</td><td colspan="5">${esc(l.desc)}</td><td class="num">${fv(r.tm)}</td><td class="num">${fv(r.td)}</td><td></td><td class="num">${tot(r)}</td></tr>`
-          : `<tr class="pe-grp"><td class="c-i">${num}</td><td colspan="4">${esc(l.desc)}</td><td class="num">${tot(r)}</td></tr>`;
-      } else {
+      if (g) h = agregada('pe-grp', num, esc(l.desc), somas(r));
+      else {
         const neg = r.neg;
-        h = `<tr class="${sub ? 'pe-sub' : 'pe-it'}"><td class="c-i">${num}</td><td class="pe-d">${esc(l.desc)}</td><td class="num">${fq(l.qtd)}</td><td class="c-u">${esc(l.un)}</td>`
-          + (completa ? `<td class="num">${neg ? '' : fv(r.mu)}</td><td class="num">${neg ? '' : fv(r.du)}</td><td class="num">${neg ? '' : fv(r.tm)}</td><td class="num">${neg ? '' : fv(r.td)}</td>` : '')
-          + `<td class="num">${neg ? '' : fv(r.unit)}</td><td class="num pe-t">${tot(r)}</td></tr>`;
+        const val = {
+          i: num, d: esc(l.desc), q: fq(l.qtd), u: esc(l.un), mu: neg ? '' : fv(r.mu), du: neg ? '' : fv(r.du), tm: neg ? '' : fv(r.tm), td: neg ? '' : fv(r.td),
+          pu: neg ? '' : fv(r.unit), v: neg ? '' : fv(r.tot), b: neg ? '' : fv(r.tot * tb), t: neg ? negc : bcol ? fv(r.tot * (1 + tb)) : fv(r.tot),
+        };
+        h = `<tr class="${sub ? 'pe-sub' : 'pe-it'}">${C.map((c) => `<td class="${c.k === 'd' ? 'pe-d' : c.cls}">${val[c.k]}</td>`).join('')}</tr>`;
       }
       if (l.obs) h += `<tr class="pe-obs"><td></td><td colspan="${nc - 1}"><b>Observação:</b> ${esc(l.obs)}</td></tr>`;
       return h;
@@ -1397,24 +1449,19 @@
         if (temSub(l)) l.sub.forEach((s, k) => { corpo += linha(s, `${n}.${j + 1}.${k + 1}`, true); });
       });
       if (!et.itens.length) corpo += `<tr class="pe-it"><td></td><td colspan="${nc - 1}" class="pe-vaz">Sem itens</td></tr>`;
-      corpo += semQ
-        ? `<tr class="pe-st"><td></td><td>Subtotal da etapa ${n}</td><td class="num">${tot(re)}</td></tr>`
-        : completa
-        ? `<tr class="pe-st"><td></td><td colspan="5">Subtotal da etapa ${n}</td><td class="num">${fv(re.tm)}</td><td class="num">${fv(re.td)}</td><td></td><td class="num">${tot(re)}</td></tr>`
-        : `<tr class="pe-st"><td></td><td colspan="4">Subtotal da etapa ${n}</td><td class="num">${tot(re)}</td></tr>`;
+      corpo += agregada('pe-st', '', `Subtotal da etapa ${n}`, somas(re));
       corpo += '</tbody>';
     });
-    const cab = semQ
-      ? '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num">Valor</th></tr>'
-      : completa
-      ? '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num c-q">Quant.</th><th class="c-u">Unid.</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total material</th><th class="num">Total mão de obra</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>'
-      : '<tr><th class="c-i">Item</th><th>Descrição dos serviços</th><th class="num c-q">Quant.</th><th class="c-u">Unid.</th><th class="num">Preço unit.</th><th class="num">Total</th></tr>';
-    const resumo = op.resumo ? `<h2>Resumo por etapa</h2><table class="pe-res"><colgroup><col style="width:6%"><col><col style="width:13%"><col style="width:13%"><col style="width:14%"><col style="width:8%"></colgroup><thead><tr><th class="c-i">Item</th><th>Etapa</th><th class="num">Material</th><th class="num">Mão de obra</th><th class="num">Total</th><th class="num">%</th></tr></thead><tbody>
-        ${o.etapas.map((et, i) => { const r = V.m.get(et.id); return `<tr><td class="c-i">${i + 1}</td><td>${esc(et.titulo)}</td><td class="num">${fv(r.tm)}</td><td class="num">${fv(r.td)}</td><td class="num">${tot(r)}</td><td class="num">${V.direto && !r.neg ? pct(r.tot / V.direto) : ''}</td></tr>`; }).join('')}</tbody>
-        <tfoot>${emb ? '' : `<tr><td></td><td>Custo direto</td><td class="num">${fv(V.tm)}</td><td class="num">${fv(V.td)}</td><td class="num">${fv(V.direto)}</td><td class="num">100%</td></tr>
-          <tr><td></td><td colspan="3">${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${fv(V.bdi)}</td><td></td></tr>
-          ${imp ? `<tr><td></td><td colspan="3">${esc(o.impostoRotulo)} (${impTxt(o)})</td><td class="num">${fv(V.imposto)}</td><td></td></tr>` : ''}`}
-          <tr class="f"><td></td><td colspan="3">Valor final${emb ? ` (${incl})` : ''}</td><td class="num">${fv(V.final)}</td><td></td></tr></tfoot></table>` : '';
+    const cab = `<tr>${C.map((c) => `<th class="${c.cls.replace('pe-t', '').trim()}">${esc(c.tit)}</th>`).join('')}</tr>`;
+    const resSep = op.precos !== 'unitario';
+    const mo = (a, b) => (resSep ? `<td class="num">${a}</td><td class="num">${b}</td>` : '');
+    const span = resSep ? 3 : 1;
+    const resumo = op.resumo ? `<h2>Resumo por etapa</h2><table class="pe-res"><colgroup><col style="width:6%"><col>${resSep ? '<col style="width:13%"><col style="width:13%">' : ''}<col style="width:14%"><col style="width:8%"></colgroup><thead><tr><th class="c-i">Item</th><th>Etapa</th>${resSep ? '<th class="num">Material</th><th class="num">Mão de obra</th>' : ''}<th class="num">Total</th><th class="num">%</th></tr></thead><tbody>
+        ${o.etapas.map((et, i) => { const r = V.m.get(et.id); return `<tr><td class="c-i">${i + 1}</td><td>${esc(et.titulo)}</td>${mo(fv(r.tm), fv(r.td))}<td class="num">${tot(r)}</td><td class="num">${V.direto && !r.neg ? pct(r.tot / V.direto) : ''}</td></tr>`; }).join('')}</tbody>
+        <tfoot>${emb ? '' : `<tr><td></td><td>Custo direto</td>${mo(fv(V.tm), fv(V.td))}<td class="num">${fv(V.direto)}</td><td class="num">100%</td></tr>
+          <tr><td></td><td colspan="${span}">${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${fv(V.bdi)}</td><td></td></tr>
+          ${imp ? `<tr><td></td><td colspan="${span}">${esc(o.impostoRotulo)} (${impTxt(o)})</td><td class="num">${fv(V.imposto)}</td><td></td></tr>` : ''}`}
+          <tr class="f"><td></td><td colspan="${span}">Valor final${emb ? ` (${incl})` : ''}</td><td class="num">${fv(V.final)}</td><td></td></tr></tfoot></table>` : '';
     const fim = `<div class="pe-fim"><table class="pe-tot">
         ${emb ? '' : `<tr><td>Subtotal geral (custo direto)</td><td class="num">${brl(V.direto)}</td></tr><tr><td>${esc(o.bdiRotulo)} (${bdiTxt(o)})</td><td class="num">${brl(V.bdi)}</td></tr>`
           + (imp ? `<tr><td>${esc(o.impostoRotulo)} (${impTxt(o)})</td><td class="num">${brl(V.imposto)}</td></tr>` : '')}
@@ -1422,7 +1469,7 @@
         ${op.extenso ? `<p class="pe-ext">${esc(cap(extenso(V.final)))}.</p>` : ''}</div>`;
     const temNeg = calcular(o).nNeg > 0;
     const notas = [emb ? (semQ ? `Valores com ${incl}.` : `Preços unitários com ${incl}, arredondados ao centavo.`) : '', temNeg ? 'Itens "a negociar" não entram no valor final.' : ''].filter(Boolean);
-    return `<div class="rp pe ${op.orientacao === 'retrato' ? 'retrato' : ''} ${completa ? '' : 'resumida'} ${semQ ? 'semquant' : ''}">
+    return `<div class="rp pe ${op.orientacao === 'retrato' ? 'retrato' : ''} ${nc <= 6 ? 'resumida' : ''} ${nc >= 10 ? 'cheia' : ''} ${semQ ? 'semquant' : ''}">
       <div class="rp-head"><div class="rp-logo"><img src="img/logo.png?v=${Sis.VERSAO}" alt="${esc(e.nome)}"></div>
         <div class="rp-tit"><h1>Planilha orçamentária</h1><div class="pe-mod">${TITULO_MOD[o.modalidade]}</div><div>Orçamento nº ${esc(o.codigo || 's/n')} · ${dataBR(o.data)}${o.validade ? ` · Validade de ${o.validade} dias` : ''}</div></div></div>
       <div class="rp-obra">
@@ -1432,7 +1479,8 @@
       </div>
       ${resumo}
       ${op.resumo ? '<h2>Planilha detalhada</h2>' : ''}
-      <table class="pe-tab"><colgroup>${(semQ ? [7, 75, 18] : completa ? [5, 32, 6.5, 4.5, 8.5, 8.5, 9, 9, 8.5, 8.5] : [6, 54, 8, 6, 12, 14]).map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead>${cab}</thead>${corpo}</table>
+      <table class="pe-tab"><colgroup>${C.map((c) => `<col style="width:${c.w}%">`).join('')}</colgroup><thead>${cab}</thead>${corpo}</table>
+      ${leg.length ? `<p class="pe-leg">${leg.join('; ')}.</p>` : ''}
       ${fim}
       ${notas.length ? `<p class="obs">${notas.join(' ')}</p>` : ''}
       ${op.obs && (o.observacoes || '').trim() ? `<div class="pe-cond"><h2>Observações e condições</h2><div class="pe-obsg">${esc(o.observacoes.trim())}</div></div>` : ''}
@@ -1467,26 +1515,34 @@
     salvarAgora();
     const o = est.orc; if (!o) return;
     if (!o.etapas.length) { ui.toast('A planilha ainda não tem etapas.'); return; }
-    const op = Object.assign({}, IMPRESSAO_PADRAO, o.impressao);
+    const op = opImpressao(o.impressao);
     const seg = (k, ops) => `<div class="seg o-seg" data-op="${k}">${ops.map(([v, n]) => `<button type="button" data-v="${v}" class="${op[k] === v ? 'on' : ''}">${n}</button>`).join('')}</div>`;
     const chk = (k, n) => `<label class="chk"><input type="checkbox" data-op="${k}" ${op[k] ? 'checked' : ''}> <span>${n}</span></label>`;
     ui.abrirModal({
       titulo: 'Imprimir ou salvar PDF', sub: 'Na janela de impressão, escolha "Salvar como PDF" para gerar o arquivo.',
       corpo: `<div class="o-imp">
-        <div class="f"><span>Folha</span>${seg('orientacao', [['paisagem', 'A4 deitada'], ['retrato', 'A4 em pé']])}</div>
+        <div class="f"><span>Folha</span>${seg('orientacao', [['paisagem', 'A4 deitada'], ['retrato', 'A4 em pé']])}<small class="o-dica" data-dica-retrato>Em pé, os títulos das colunas usam siglas (MAT, MO, Tot. MAT...), com a legenda logo abaixo da planilha.</small></div>
         <div class="f"><span>Quantitativo</span>${seg('quantitativo', [['mostrar', 'Mostrar quantidades e preços unitários'], ['ocultar', 'Só o valor de cada item']])}</div>
-        <div class="f" data-colunas><span>Colunas</span>${seg('colunas', [['completa', 'Material e mão de obra'], ['resumida', 'Só preço unitário e total']])}</div>
-        <div class="f"><span>BDI</span>${seg('bdi', [['separado', 'Em linha separada'], ['embutido', 'Embutido nos preços']])}</div>
+        <div class="f" data-precos><span>Preços</span>${seg('precos', [['separado', 'Material e mão de obra separados'], ['unitario', 'Só preço unitário']])}<small class="o-dica" data-dica-precos>Sem quantitativo, vale só para o resumo por etapa.</small></div>
+        <div class="f" data-totais>${chk('totaisItem', 'Mostrar o total de material e o de mão de obra de cada item')}</div>
+        <div class="f"><span>BDI</span>${seg('bdi', [['separado', 'Valor total na última linha'], ['coluna', 'Coluna com o BDI de cada item'], ['embutido', 'Embutido nos preços']])}</div>
         <div class="o-imp-chk">${chk('resumo', 'Resumo por etapa no início')}${chk('extenso', 'Valor final por extenso')}${chk('obs', 'Observações e condições')}${chk('assinatura', 'Local, data e assinatura')}</div></div>`,
       aoAbrir: (el) => {
-        const cols = () => { const f = $('[data-colunas]', el); const off = op.quantitativo === 'ocultar'; f.classList.toggle('o-off', off); $$('button', f).forEach((b) => { b.disabled = off; }); };
+        const desliga = (f, off) => { f.classList.toggle('o-off', off); $$('button,input', f).forEach((b) => { b.disabled = off; }); };
+        const cols = () => {
+          const semQ = op.quantitativo === 'ocultar';
+          desliga($('[data-precos]', el), semQ && !op.resumo);
+          desliga($('[data-totais]', el), semQ || op.precos === 'unitario');
+          $('[data-dica-precos]', el).hidden = !(semQ && op.resumo);
+          $('[data-dica-retrato]', el).hidden = op.orientacao !== 'retrato';
+        };
         $$('.o-seg', el).forEach((s) => s.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (!b || b.disabled) return; op[s.dataset.op] = b.dataset.v; $$('button', s).forEach((x) => x.classList.toggle('on', x === b)); cols(); }));
         cols();
-        $$('input[data-op]', el).forEach((c) => c.addEventListener('change', () => { op[c.dataset.op] = c.checked; }));
+        $$('input[data-op]', el).forEach((c) => c.addEventListener('change', () => { op[c.dataset.op] = c.checked; cols(); }));
       },
       botoes: [{ rot: 'Cancelar' }, {
         rot: 'Imprimir', classe: 'primary', icone: 'imprimir', acao: (m) => {
-          if (JSON.stringify(op) !== JSON.stringify(Object.assign({}, IMPRESSAO_PADRAO, o.impressao))) { est.orc.impressao = Object.assign({}, op); salvarDepois(); salvarAgora(); }
+          if (JSON.stringify(op) !== JSON.stringify(opImpressao(o.impressao))) { est.orc.impressao = Object.assign({}, op); salvarDepois(); salvarAgora(); }
           m.fechar();
           imprimir(est.orc, op);
         },

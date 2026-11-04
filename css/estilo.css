@@ -956,6 +956,7 @@ textarea.o-in{resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:any
 .o-seg{flex-wrap:wrap;align-self:flex-start}
 .o-imp .f.o-off{opacity:.45}
 .o-imp .f.o-off button{cursor:default}
+.o-imp .o-dica{display:block;margin:0;font-size:12px;font-weight:400;color:var(--muted);line-height:1.4}
 .o-imp-chk{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:2px}
 .o-imp-res{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.6fr);gap:8px}
 .o-imp-res div{background:var(--surface-2);border-radius:10px;padding:10px 12px;min-width:0}
@@ -1049,6 +1050,10 @@ textarea.o-in{resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:any
 .pe .pe-tab{font-size:7.9pt}
 .pe.retrato .pe-tab{font-size:7.1pt}
 .pe.retrato.resumida .pe-tab{font-size:8pt}
+.pe.retrato.cheia .pe-tab{font-size:6.8pt}
+.pe .pe-tab th.num,.pe .pe-tab th{white-space:normal;overflow-wrap:normal;hyphens:none}
+.pe .pe-tab th,.pe .pe-tab th.num,.pe .pe-res th,.pe .pe-res th.num{text-align:center;vertical-align:middle}
+.pe .pe-leg{font-size:7.2pt;color:#666;margin:3px 0 0;line-height:1.4}
 .pe .pe-tab th,.pe .pe-res th{background:#9C2F40;color:#fff;border-bottom:0;font-size:7pt;text-transform:uppercase;letter-spacing:.03em;padding:5px 4px;vertical-align:bottom}
 .pe .pe-tab td{padding:3px 4px;overflow-wrap:anywhere}
 .pe .c-i,.pe .c-u{text-align:center}
