@@ -875,6 +875,7 @@ textarea.o-in{resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:any
 .o-obs-b .o-in{font-size:13px;color:var(--ink-2);font-style:italic;min-height:29px}
 .o-obs.o-sub .o-obs-b{margin-left:20px}
 .o-obs-et td{padding-top:4px}
+.o-isen{display:block;font-size:10.5px;font-weight:600;color:var(--brand-700);letter-spacing:.01em;line-height:1.2}
 .o-ce-ob{display:flex;align-items:flex-start;gap:6px;width:100%;text-align:left;padding:8px 12px;background:#FFF7F8;border:0;border-bottom:1px solid var(--brand-100);color:var(--brand-700);font:inherit;font-size:12.5px;font-style:italic;cursor:pointer}
 .o-ce-ob .ic{width:14px;height:14px;margin-top:2px;flex:none}
 .o-add-et{all:unset;cursor:pointer;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:12px;padding:12px;border:1.5px dashed var(--line-2);border-radius:var(--radius);color:var(--muted);font-weight:500;font-size:13.5px}
@@ -1056,6 +1057,7 @@ textarea.o-in{resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:any
 .pe.retrato.cheia .pe-tab{font-size:6.8pt}
 .pe .pe-tab th.num,.pe .pe-tab th{white-space:normal;overflow-wrap:normal;hyphens:none}
 .pe .pe-tab th,.pe .pe-tab th.num,.pe .pe-res th,.pe .pe-res th.num{text-align:center;vertical-align:middle}
+.pe .pe-isen{font-style:italic;color:#9C2F40;font-size:.9em;font-weight:400;white-space:nowrap}
 .pe .pe-leg{font-size:7.2pt;color:#666;margin:3px 0 0;line-height:1.4}
 .pe .pe-tab th,.pe .pe-res th{background:#9C2F40;color:#fff;border-bottom:0;font-size:7pt;text-transform:uppercase;letter-spacing:.03em;padding:5px 4px;vertical-align:bottom}
 .pe .pe-tab td{padding:3px 4px;overflow-wrap:anywhere}

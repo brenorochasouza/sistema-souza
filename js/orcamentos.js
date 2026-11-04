@@ -30,6 +30,7 @@
     dados: '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><path d="M9 13h6M9 17h4"/>',
     mover: '<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>',
     etiqueta: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1"/>',
+    porcento: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
   });
 
   /* ---------------- constantes ---------------- */
@@ -188,7 +189,7 @@
   /* ---------------- cálculo ----------------
      Linha: total = quantidade x (material + mão de obra).
      Item com subitens: soma dos subitens. Etapa: soma dos itens.
-     Valor final = custo direto + BDI (% sobre o custo direto)
+     Valor final = custo direto + BDI (% sobre o custo direto, sem os itens isentos de BDI)
      + imposto, só na obra por preço global (% sobre o custo direto
      ou sobre custo direto + BDI, conforme a escolha). */
   const comImposto = (o) => o.modalidade === 'global' && nn(o.imposto) > 0;
@@ -198,20 +199,21 @@
   }
   function calcular(o) {
     const m = new Map();
+    let nItens = 0, nSub = 0, nNeg = 0, nIsentos = 0;
     const folha = (l) => {
-      if (l.neg) return { mat: 0, mdo: 0, tot: 0, unit: null, neg: true };
-      const q = nn(l.qtd), a = nn(l.mat), b = nn(l.mdo);
-      return { mat: q * a, mdo: q * b, tot: q * (a + b), unit: vazio(l.mat) && vazio(l.mdo) ? null : a + b, neg: false };
+      if (l.neg) return { mat: 0, mdo: 0, tot: 0, bb: 0, unit: null, neg: true, isento: !!l.semBdi };
+      const q = nn(l.qtd), a = nn(l.mat), b = nn(l.mdo), tot = q * (a + b);
+      if (l.semBdi) nIsentos++;
+      return { mat: q * a, mdo: q * b, tot, bb: l.semBdi ? 0 : tot, unit: vazio(l.mat) && vazio(l.mdo) ? null : a + b, neg: false, isento: !!l.semBdi };
     };
-    const soma = (xs) => xs.reduce((s, x) => ({ mat: s.mat + x.mat, mdo: s.mdo + x.mdo, tot: s.tot + x.tot }), { mat: 0, mdo: 0, tot: 0 });
-    let nItens = 0, nSub = 0, nNeg = 0;
+    const soma = (xs) => xs.reduce((s, x) => ({ mat: s.mat + x.mat, mdo: s.mdo + x.mdo, tot: s.tot + x.tot, bb: s.bb + x.bb }), { mat: 0, mdo: 0, tot: 0, bb: 0 });
     const etapas = o.etapas.map((e) => {
       const its = e.itens.map((l) => {
         nItens++;
         let r;
         if (temSub(l)) {
           const ss = l.sub.map((s) => { nSub++; const x = folha(s); if (x.neg) nNeg++; m.set(s.id, x); return x; });
-          r = soma(ss); r.neg = ss.every((x) => x.neg); r.unit = null;
+          r = soma(ss); r.neg = ss.every((x) => x.neg); r.unit = null; r.isento = ss.every((x) => x.isento);
         } else { r = folha(l); if (r.neg) nNeg++; }
         m.set(l.id, r);
         return r;
@@ -223,9 +225,9 @@
     });
     const t = soma(etapas);
     const tx = taxas(o);
-    const bdiValor = t.tot * tx.b;
+    const bdiValor = t.bb * tx.b;
     const impostoValor = (t.tot + (tx.sobreBdi ? bdiValor : 0)) * tx.i;
-    return { m, etapas, mat: t.mat, mdo: t.mdo, direto: t.tot, bdiValor, impostoValor, final: t.tot + bdiValor + impostoValor, nItens, nSub, nNeg };
+    return { m, etapas, mat: t.mat, mdo: t.mdo, direto: t.tot, baseBdi: t.bb, isento: t.tot - t.bb, nIsentos, bdiValor, impostoValor, final: t.tot + bdiValor + impostoValor, nItens, nSub, nNeg };
   }
   const totalFinal = (o) => calcular(o).final;
 
@@ -481,7 +483,7 @@
      ========================================================= */
   const ABAS = [['planilha', 'Planilha', 'planilha'], ['resumo', 'Resumo', 'grafico'], ['dados', 'Dados e condições', 'dados']];
   const NUMS = new Set(['qtd', 'mat', 'mdo']);
-  const totHTML = (r) => (r.neg ? '<span class="o-negc">A negociar</span>' : fv(r.tot));
+  const totHTML = (r) => (r.neg ? '<span class="o-negc">A negociar</span>' : fv(r.tot) + (r.isento ? '<small class="o-isen">sem BDI</small>' : ''));
   const totEtapa = (r, c) => (r.neg ? '<span class="o-negc">A negociar</span>' : `<b class="n">${brl(r.tot)}</b><small>${c.direto ? pct(r.tot / c.direto) : ''}</small>`);
   const pctTxt = (v) => pct(nn(v) / 100, Math.round(nn(v) * 100) % 100 ? 2 : 0);
   const bdiTxt = (o) => pctTxt(o.bdi);
@@ -504,7 +506,7 @@
       <div class="o-k"><span>Custo direto</span><b class="n">${brl(c.direto)}</b><small>${o.etapas.length} ${o.etapas.length === 1 ? 'etapa' : 'etapas'} · ${c.nItens} itens · ${c.nSub} subitens</small></div>
       <div class="o-k"><span>Material</span><b class="n">${brl(c.mat)}</b><small>${d ? pct(c.mat / d) : '0%'} do custo direto</small></div>
       <div class="o-k"><span>Mão de obra</span><b class="n">${brl(c.mdo)}</b><small>${d ? pct(c.mdo / d) : '0%'} do custo direto</small></div>
-      <div class="o-k"><span>${esc(o.bdiRotulo)}</span><b class="n">${brl(c.bdiValor)}</b><small>${bdiTxt(o)} sobre o custo direto</small></div>
+      <div class="o-k"><span>${esc(o.bdiRotulo)}</span><b class="n">${brl(c.bdiValor)}</b><small>${c.isento > 0.005 ? `${bdiTxt(o)} sobre ${brl(c.baseBdi)} (${c.nIsentos} ${c.nIsentos === 1 ? 'isento' : 'isentos'})` : `${bdiTxt(o)} sobre o custo direto`}</small></div>
       ${imp ? `<div class="o-k"><span>${esc(o.impostoRotulo)}</span><b class="n">${brl(c.impostoValor)}</b><small>${impTxt(o)} ${baseImpTxt(o)}</small></div>` : ''}
       <div class="o-k hero"><span>Valor final</span><b class="n">${brl(c.final)}</b><small>${c.nNeg ? `Fora do total: ${c.nNeg} ${c.nNeg === 1 ? 'linha' : 'linhas'} a negociar` : imp ? 'Custo direto + BDI + imposto' : 'Custo direto + BDI'}</small></div>
     </div>`;
@@ -885,6 +887,8 @@
     it.push('-');
     it.push({ rot: l.obs != null ? 'Remover observação' : 'Adicionar observação', ic: 'balao', acao: () => alternarObs(id) });
     if (!grp) it.push({ rot: l.neg ? 'Tirar "a negociar"' : 'Marcar "a negociar"', ic: 'etiqueta', acao: () => alternarNeg(id) });
+    const isento = grp ? l.sub.every((x) => x.semBdi) : !!l.semBdi;
+    it.push({ rot: grp ? (isento ? 'Aplicar BDI nos subitens' : 'Isentar subitens de BDI') : isento ? 'Aplicar BDI' : 'Isentar de BDI', ic: 'porcento', acao: () => alternarIsencao(id) });
     it.push('-');
     it.push({ rot: grp ? 'Excluir item e subitens' : 'Excluir', ic: 'lixo', perigo: true, acao: () => excluirLinha(id) });
     popover(el, it);
@@ -1029,6 +1033,17 @@
     mudar((o) => { const l = acharLinha(o, id).linha; if (vira) l.neg = true; else delete l.neg; });
     ui.toast(vira ? 'Linha marcada como "a negociar": fica fora do total.' : 'A linha voltou a entrar no total.');
   }
+  /** Item isento de BDI: entra no custo direto, mas fica fora da base do BDI. Num item com subitens, vale para todos. */
+  function alternarIsencao(id) {
+    const p = acharLinha(est.orc, id); if (!p) return;
+    const grp = !p.pai && temSub(p.linha);
+    const vira = grp ? !p.linha.sub.every((x) => x.semBdi) : !p.linha.semBdi;
+    mudar((o) => {
+      const l = acharLinha(o, id).linha;
+      (grp ? l.sub : [l]).forEach((x) => { if (vira) x.semBdi = true; else delete x.semBdi; });
+    });
+    ui.toast(vira ? (grp ? 'Subitens isentos de BDI: ficam fora da base do BDI.' : 'Item isento de BDI: fica fora da base do BDI.') : 'O BDI volta a incidir sobre ' + (grp ? 'os subitens.' : 'o item.'));
+  }
   async function excluirLinha(id) {
     const p = acharLinha(est.orc, id); if (!p) return;
     const num = numeroDe(est.orc, id);
@@ -1136,7 +1151,8 @@
           <label class="f"><span>Mão de obra (R$ por unidade)</span><input class="inp money" name="mdo" inputmode="decimal" value="${esc(cru(l.mdo))}" autocomplete="off"></label>
         </div>
         <div class="o-prev" data-prev></div>
-        <label class="chk"><input type="checkbox" name="neg" ${l.neg ? 'checked' : ''}> <span>Valores a negociar (fica fora do total)</span></label>`}
+        <label class="chk"><input type="checkbox" name="neg" ${l.neg ? 'checked' : ''}> <span>Valores a negociar (fica fora do total)</span></label>
+        <label class="chk"><input type="checkbox" name="semBdi" ${l.semBdi ? 'checked' : ''}> <span>Isento de BDI (entra no custo, fica fora da base do BDI)</span></label>`}
         <label class="f"><span>Observação</span><textarea class="inp" name="obs" rows="2" placeholder="Opcional. Aparece logo abaixo da linha">${esc(l.obs || '')}</textarea></label>
         ${acoes.length ? `<div class="o-m-acoes">${acoes.map(([k, ic, rot, off]) => `<button type="button" class="btn sm" data-ma="${k}" ${off ? 'disabled' : ''}>${icone(ic)}${rot}</button>`).join('')}</div>` : ''}`,
       aoAbrir: (el, mm) => {
@@ -1191,7 +1207,7 @@
           if (r === null) { q(n).classList.add('erro'); q(n).focus(); return false; }
           v[n] = r;
         }
-        Object.assign(campos, { un: q('un').value.trim(), qtd: v.qtd.v, mat: v.mat.v, mdo: v.mdo.v, qf: v.qtd.f || undefined, neg: q('neg').checked || undefined });
+        Object.assign(campos, { un: q('un').value.trim(), qtd: v.qtd.v, mat: v.mat.v, mdo: v.mdo.v, qf: v.qtd.f || undefined, neg: q('neg').checked || undefined, semBdi: q('semBdi').checked || undefined });
       }
       if (!pos && !campos.desc && vazio(campos.qtd) && vazio(campos.mat) && vazio(campos.mdo)) { q('desc').classList.add('erro'); q('desc').focus(); return false; }
       const antes = pos ? JSON.stringify(pos.linha) : null;
@@ -1369,18 +1385,18 @@
   /** Valores para impressão e Excel. Com o BDI (e o imposto) embutido, os preços unitários são arredondados ao centavo. */
   function valoresSaida(o, embutido) {
     const tx = taxas(o);
-    const f = embutido ? tx.fator : 1;
     const m = new Map();
     const folha = (l) => {
       const semPreco = vazio(l.mat) && vazio(l.mdo);
-      if (l.neg) return { neg: true, mu: null, du: null, unit: null, tm: 0, td: 0, tot: 0 };
+      const f = embutido ? (l.semBdi ? 1 + tx.i : tx.fator) : 1;
+      if (l.neg) return { neg: true, mu: null, du: null, unit: null, tm: 0, td: 0, tot: 0, bb: 0 };
       const q = nn(l.qtd);
       let a = nn(l.mat), b = nn(l.mdo);
       if (embutido) { a = r2(a * f); b = r2(b * f); }
       const tm = embutido ? r2(q * a) : q * a, td = embutido ? r2(q * b) : q * b;
-      return { neg: false, mu: vazio(l.mat) ? null : a, du: vazio(l.mdo) ? null : b, unit: semPreco ? null : a + b, tm, td, tot: tm + td };
+      return { neg: false, mu: vazio(l.mat) ? null : a, du: vazio(l.mdo) ? null : b, unit: semPreco ? null : a + b, tm, td, tot: tm + td, bb: l.semBdi ? 0 : tm + td };
     };
-    const soma = (xs) => xs.reduce((s, x) => ({ tm: s.tm + x.tm, td: s.td + x.td, tot: s.tot + x.tot }), { tm: 0, td: 0, tot: 0 });
+    const soma = (xs) => xs.reduce((s, x) => ({ tm: s.tm + x.tm, td: s.td + x.td, tot: s.tot + x.tot, bb: s.bb + x.bb }), { tm: 0, td: 0, tot: 0, bb: 0 });
     const ets = o.etapas.map((e) => {
       const its = e.itens.map((l) => {
         let r;
@@ -1392,9 +1408,9 @@
       m.set(e.id, r); return r;
     });
     const t = soma(ets);
-    const bdi = embutido ? 0 : t.tot * tx.b;
+    const bdi = embutido ? 0 : t.bb * tx.b;
     const imposto = embutido ? 0 : (t.tot + (tx.sobreBdi ? bdi : 0)) * tx.i;
-    return { m, tm: t.tm, td: t.td, direto: t.tot, bdi, imposto, final: t.tot + bdi + imposto };
+    return { m, tm: t.tm, td: t.td, direto: t.tot, baseBdi: t.bb, bdi, imposto, final: t.tot + bdi + imposto };
   }
 
   /** Colunas da planilha impressa. Na folha em pé os títulos usam siglas, explicadas na legenda. */
@@ -1445,7 +1461,8 @@
     const negc = '<span class="pe-neg">A negociar</span>';
     const tot = (r) => (r.neg ? negc : fv(r.tot));
     /** Valores das colunas de soma (grupo de subitens, subtotal da etapa). */
-    const somas = (r) => ({ tm: fv(r.tm), td: fv(r.td), v: r.neg ? '' : fv(r.tot), b: r.neg ? '' : fv(r.tot * tb), t: r.neg ? negc : bcol ? fv(r.tot * (1 + tb)) : fv(r.tot) });
+    const somas = (r) => ({ tm: fv(r.tm), td: fv(r.td), v: r.neg ? '' : fv(r.tot), b: r.neg ? '' : fv(r.bb * tb), t: r.neg ? negc : bcol ? fv(r.tot + r.bb * tb) : fv(r.tot) });
+    const isen = '<span class="pe-isen">(sem BDI)</span>';
     const agregada = (cls, num, texto, vals) => {
       const resto = C.slice(1);
       let n = 0;
@@ -1461,8 +1478,8 @@
       else {
         const neg = r.neg;
         const val = {
-          i: num, d: esc(l.desc), q: fq(l.qtd), u: esc(l.un), mu: neg ? '' : fv(r.mu), du: neg ? '' : fv(r.du), tm: neg ? '' : fv(r.tm), td: neg ? '' : fv(r.td),
-          pu: neg ? '' : fv(r.unit), v: neg ? '' : fv(r.tot), b: neg ? '' : fv(r.tot * tb), t: neg ? negc : bcol ? fv(r.tot * (1 + tb)) : fv(r.tot),
+          i: num, d: esc(l.desc) + (l.semBdi ? ' ' + isen : ''), q: fq(l.qtd), u: esc(l.un), mu: neg ? '' : fv(r.mu), du: neg ? '' : fv(r.du), tm: neg ? '' : fv(r.tm), td: neg ? '' : fv(r.td),
+          pu: neg ? '' : fv(r.unit), v: neg ? '' : fv(r.tot), b: neg ? '' : l.semBdi ? '<span class="pe-isen">isento</span>' : fv(r.tot * tb), t: neg ? negc : bcol ? fv(r.tot + r.bb * tb) : fv(r.tot),
         };
         h = `<tr class="${sub ? 'pe-sub' : 'pe-it'}">${C.map((c) => `<td class="${c.k === 'd' ? 'pe-d' : c.cls}">${val[c.k]}</td>`).join('')}</tr>`;
       }
@@ -1498,7 +1515,8 @@
         <tr class="f"><td>Valor final da obra${emb ? ` (${incl})` : ''}</td><td class="num">${brl(V.final)}</td></tr></table>
         ${op.extenso ? `<p class="pe-ext">${esc(cap(extenso(V.final)))}.</p>` : ''}</div>`;
     const temNeg = calcular(o).nNeg > 0;
-    const notas = [emb ? (semQ ? `Valores com ${incl}.` : `Preços unitários com ${incl}, arredondados ao centavo.`) : '', temNeg ? 'Itens "a negociar" não entram no valor final.' : ''].filter(Boolean);
+    const temIsen = o.etapas.some((et) => et.itens.some((l) => (temSub(l) ? l.sub : [l]).some((x) => x.semBdi && !x.neg)));
+    const notas = [emb ? (semQ ? `Valores com ${incl}.` : `Preços unitários com ${incl}, arredondados ao centavo.`) : '', temNeg ? 'Itens "a negociar" não entram no valor final.' : '', temIsen ? (emb ? 'Os itens marcados "sem BDI" não têm o BDI embutido no preço.' : `${esc(o.bdiRotulo)} (${bdiTxt(o)}) calculado sobre ${brl(V.baseBdi)}: os itens marcados "sem BDI" ficam fora dessa base.`) : ''].filter(Boolean);
     return `<div class="rp pe ${op.orientacao === 'retrato' ? 'retrato' : ''} ${nc <= 6 ? 'resumida' : ''} ${nc >= 10 ? 'cheia' : ''} ${semQ ? 'semquant' : ''}">
       <div class="rp-head"><div class="rp-logo"><img src="img/logo.png?v=${Sis.VERSAO}" alt="${esc(e.nome)}"></div>
         <div class="rp-tit"><h1>Planilha orçamentária</h1><div class="pe-mod">${TITULO_MOD[o.modalidade]}</div><div>Orçamento nº ${esc(o.codigo || 's/n')} · ${dataBR(o.data)}${o.validade ? ` · Validade de ${o.validade} dias` : ''}</div></div></div>
@@ -1650,13 +1668,14 @@
     r = 4;
     add([cel.t('B', 'ITEM', X.hd), cel.t('C', 'DESCRIÇÃO DOS SERVIÇOS', X.hd), cel.t('D', 'QUANT.', X.hd), cel.t('E', 'UNID.', X.hd), cel.t('F', 'MATERIAL', X.hd), cel.t('G', 'MÃO DE OBRA', X.hd), cel.t('H', 'TOTAL MAT', X.hd), cel.t('I', 'TOTAL MDO', X.hd), cel.t('J', 'P. UNIT. R$', X.hd), cel.t('K', 'R$ TOTAL', X.hd)], 22);
     r = 6;
-    const subtotais = [];
+    const subtotais = [], isentosK = [];
     const linhaFolha = (l, num, sub) => {
       const x = V.m.get(l.id);
       const [sN, sD, sU, sQ, sV] = sub ? [X.sbN, X.sbD, X.sbU, X.sbQ, X.sbV] : [X.itN, X.itD, X.itU, X.itQ, X.itV];
       const q = l.qtd, a = l.neg ? null : l.mat, b = l.neg ? null : l.mdo;
       const qq = nn(q), aa = nn(a), bb = nn(b);
-      add([cel.t('B', num, sN), cel.t('C', l.desc, sD), cel.n('D', q, sQ), cel.t('E', l.un, sU), cel.n('F', a, sV), cel.n('G', b, sV),
+      if (l.semBdi && !l.neg) isentosK.push(r);
+      add([cel.t('B', num, sN), cel.t('C', l.desc + (l.semBdi ? ' (sem BDI)' : ''), sD), cel.n('D', q, sQ), cel.t('E', l.un, sU), cel.n('F', a, sV), cel.n('G', b, sV),
         cel.f('H', `F${r}*D${r}`, qq * aa, sV), cel.f('I', `G${r}*D${r}`, qq * bb, sV), cel.f('J', `G${r}+F${r}`, aa + bb, sV),
         l.neg ? cel.t('K', 'A NEGOCIAR', X.neg) : cel.f('K', `J${r}*D${r}`, x.tot, sV)], alt(l.desc, 64));
       return r - 1;
@@ -1699,7 +1718,7 @@
     const rSG = r;
     add([cel.t('B', 'SUBTOTAL GERAL', X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', subtotais.map((k) => `K${k}`).join('+') || '0', V.direto, X.fimV)], 20);
     merges.push(`B${rSG}:J${rSG}`);
-    add([cel.t('B', `${o.bdiRotulo} (${bdiTxt(o)})`, X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `K${rSG}*${xn(nn(o.bdi) / 100)}`, V.bdi, X.fimV)], 20);
+    add([cel.t('B', `${o.bdiRotulo} (${bdiTxt(o)})`, X.fimL), ...COLS.slice(1, 9).map((c) => cel.e(c, X.fimL)), cel.f('K', `${isentosK.length ? `(K${rSG}-(${isentosK.map((k) => 'K' + k).join('+')}))` : `K${rSG}`}*${xn(nn(o.bdi) / 100)}`, V.bdi, X.fimV)], 20);
     merges.push(`B${rSG + 1}:J${rSG + 1}`);
     let rFim = rSG + 1;
     if (comImposto(o)) {
@@ -1922,8 +1941,10 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       if (typeof va === 'number' && typeof vb !== 'number') { qtd = va; un = txt(vb); }
       else if (typeof vb === 'number') { qtd = vb; un = txt(va); }
       else { un = txt(va || vb); qtd = numCel(va) ?? numCel(vb); }
-      const lin = novaLinha({ desc: ds, un, qtd: vazio(qtd) ? null : Math.round(qtd * 1e6) / 1e6, mat: vazio(numCel(c[cols.mat])) ? null : Math.round(numCel(c[cols.mat]) * 1e6) / 1e6, mdo: vazio(numCel(c[cols.mdo])) ? null : Math.round(numCel(c[cols.mdo]) * 1e6) / 1e6 });
+      const semBdi = /\(\s*sem\s+bdi\s*\)\s*$/i.test(ds);
+      const lin = novaLinha({ desc: semBdi ? txt(ds.replace(/\(\s*sem\s+bdi\s*\)\s*$/i, '')) : ds, un, qtd: vazio(qtd) ? null : Math.round(qtd * 1e6) / 1e6, mat: vazio(numCel(c[cols.mat])) ? null : Math.round(numCel(c[cols.mat]) * 1e6) / 1e6, mdo: vazio(numCel(c[cols.mdo])) ? null : Math.round(numCel(c[cols.mdo]) * 1e6) / 1e6 });
       if (vazio(lin.qtd) && vazio(lin.mat) && vazio(lin.mdo)) lin.neg = true;
+      if (semBdi) lin.semBdi = true;
       const niveis = ref.split('.').length;
       if (niveis === 3 && ultimoItem) {
         virarGrupo(ultimoItem); ultimoItem.sub.push(lin);
