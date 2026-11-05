@@ -143,6 +143,16 @@
   const copia = (v) => JSON.parse(JSON.stringify(v));
   const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3);
   const temSub = (l) => Array.isArray(l.sub) && l.sub.length > 0;
+  /** Níveis da planilha: 1 = item (1.1), 2 = subitem (1.1.1), 3 = subitem do subitem (1.1.1.1). */
+  const MAX_NIVEL = 3;
+  /** Percorre as linhas em ordem, entrando nos subitens: fn(linha, número, nível, pai). */
+  function cadaLinha(lista, pre, fn, nivel = 1, pai = null) {
+    lista.forEach((l, j) => { const n = `${pre}.${j + 1}`; fn(l, n, nivel, pai); if (temSub(l)) cadaLinha(l.sub, n, fn, nivel + 1, l); });
+  }
+  const folhasDe = (l) => (temSub(l) ? l.sub.flatMap(folhasDe) : [l]);
+  const descendentes = (l) => (temSub(l) ? l.sub.flatMap((x) => [x, ...descendentes(x)]) : []);
+  /** Quantos níveis a linha ocupa: 1 sem subitens, 2 com subitens, 3 com subitens que têm subitens. */
+  const alturaDe = (l) => (temSub(l) ? 1 + Math.max(...l.sub.map(alturaDe)) : 1);
   const novaLinha = (p = {}) => Object.assign({ id: rid(), desc: '', un: '', qtd: null, mat: null, mdo: null }, p);
   const novaEtapa = (titulo = '') => ({ id: rid(), titulo, itens: [] });
   function novosIds(l) { l.id = rid(); if (l.sub) l.sub.forEach(novosIds); if (l.itens) l.itens.forEach(novosIds); return l; }
@@ -158,7 +168,8 @@
     o.etapas = Array.isArray(o.etapas) ? o.etapas : [];
     o.etapas.forEach((e) => {
       e.id = e.id || rid(); e.titulo = e.titulo || ''; e.itens = Array.isArray(e.itens) ? e.itens : [];
-      e.itens.forEach((l) => { l.id = l.id || rid(); if (l.sub) l.sub.forEach((s) => { s.id = s.id || rid(); }); });
+      const ids = (ls) => ls.forEach((l) => { l.id = l.id || rid(); if (Array.isArray(l.sub)) ids(l.sub); });
+      ids(e.itens);
     });
     o.status = ST[o.status] ? o.status : 'elaboracao';
     o.modalidade = MOD[o.modalidade] ? o.modalidade : 'global';
@@ -209,16 +220,17 @@
     };
     const soma = (xs) => xs.reduce((s, x) => ({ mat: s.mat + x.mat, mdo: s.mdo + x.mdo, tot: s.tot + x.tot, bb: s.bb + x.bb }), { mat: 0, mdo: 0, tot: 0, bb: 0 });
     const etapas = o.etapas.map((e) => {
-      const its = e.itens.map((l) => {
-        nItens++;
+      const no = (l, nivel) => {
+        if (nivel === 1) nItens++; else nSub++;
         let r;
         if (temSub(l)) {
-          const ss = l.sub.map((s) => { nSub++; const x = folha(s); if (x.neg) nNeg++; m.set(s.id, x); return x; });
+          const ss = l.sub.map((x) => no(x, nivel + 1));
           r = soma(ss); r.neg = ss.every((x) => x.neg); r.unit = null; r.isento = ss.every((x) => x.isento);
         } else { r = folha(l); if (r.neg) nNeg++; }
         m.set(l.id, r);
         return r;
-      });
+      };
+      const its = e.itens.map((l) => no(l, 1));
       const r = soma(its);
       r.neg = its.length > 0 && its.some((x) => x.neg) && Math.abs(r.tot) < 0.005;
       m.set(e.id, r);
@@ -315,27 +327,25 @@
   /** Onde está uma linha: etapa, lista que a contém, posição e item pai (se for subitem). */
   function acharLinha(o, id) {
     for (const e of o.etapas) {
-      for (let i = 0; i < e.itens.length; i++) {
-        const l = e.itens[i];
-        if (l.id === id) return { etapa: e, lista: e.itens, idx: i, pai: null, linha: l };
-        if (l.sub) for (let k = 0; k < l.sub.length; k++) if (l.sub[k].id === id) return { etapa: e, lista: l.sub, idx: k, pai: l, linha: l.sub[k] };
-      }
+      const busca = (lista, pai, nivel) => {
+        for (let i = 0; i < lista.length; i++) {
+          const l = lista[i];
+          if (l.id === id) return { etapa: e, lista, idx: i, pai, linha: l, nivel };
+          if (Array.isArray(l.sub)) { const r = busca(l.sub, l, nivel + 1); if (r) return r; }
+        }
+        return null;
+      };
+      const r = busca(e.itens, null, 1);
+      if (r) return r;
     }
     return null;
   }
   const acharEtapa = (o, id) => o.etapas.find((e) => e.id === id) || null;
-  /** Número da linha na planilha (1.2 ou 1.2.3). */
+  /** Número da linha na planilha (1.2, 1.2.3 ou 1.2.3.4). */
   function numeroDe(o, id) {
-    for (let i = 0; i < o.etapas.length; i++) {
-      const e = o.etapas[i];
-      if (e.id === id) return String(i + 1);
-      for (let j = 0; j < e.itens.length; j++) {
-        const l = e.itens[j];
-        if (l.id === id) return `${i + 1}.${j + 1}`;
-        if (l.sub) for (let k = 0; k < l.sub.length; k++) if (l.sub[k].id === id) return `${i + 1}.${j + 1}.${k + 1}`;
-      }
-    }
-    return '';
+    let achou = '';
+    o.etapas.forEach((e, i) => { if (e.id === id) achou = String(i + 1); else if (!achou) cadaLinha(e.itens, String(i + 1), (l, n) => { if (l.id === id) achou = n; }); });
+    return achou;
   }
 
   /* ---------------- banco ainda sem a tabela ---------------- */
@@ -583,7 +593,7 @@
   /* ---------------- planilha ---------------- */
   function unidadesUsadas(o) {
     const s = new Set(UNIDADES);
-    listaOrc().concat([o]).forEach((x) => x.etapas.forEach((e) => e.itens.forEach((l) => { if (l.un) s.add(l.un); (l.sub || []).forEach((y) => { if (y.un) s.add(y.un); }); })));
+    listaOrc().concat([o]).forEach((x) => x.etapas.forEach((e) => cadaLinha(e.itens, '', (l) => { if (l.un) s.add(l.un); })));
     return [...s];
   }
   function htmlPlanilha(o, c) {
@@ -623,26 +633,23 @@
         <td class="o-ac"><button class="btn icon" data-a="orc-obs-et-x" data-e="${e.id}" aria-label="Remover observação da etapa" title="Remover observação">${icone('fechar')}</button></td></tr>`;
     }
     if (!rec) {
-      e.itens.forEach((l, j) => {
-        h += linhaPC(l, `${n}.${j + 1}`, 'item', c);
-        if (temSub(l)) l.sub.forEach((s, k) => { h += linhaPC(s, `${n}.${j + 1}.${k + 1}`, 'sub', c); });
-      });
+      cadaLinha(e.itens, String(n), (l, num, nivel) => { h += linhaPC(l, num, nivel, c); });
       h += `<tr class="o-add"><td></td><td colspan="8"><button class="o-addb" data-a="orc-add-item" data-e="${e.id}">${icone('mais')}Item na etapa ${n}</button>${e.itens.length ? '' : '<span class="o-vaz">Etapa sem itens</span>'}</td></tr>`;
     }
     return h + '</tbody>';
   }
   function linhaPC(l, num, nivel, c) {
-    const r = c.m.get(l.id), g = nivel === 'item' && temSub(l);
-    const cls = ['o-it', nivel === 'sub' ? 'o-sub' : '', g ? 'o-grp' : '', l.neg ? 'o-neg' : ''].filter(Boolean).join(' ');
+    const r = c.m.get(l.id), g = temSub(l);
+    const cls = ['o-it', nivel > 1 ? 'o-sub' : '', nivel > 2 ? 'o-sub2' : '', g ? 'o-grp' : '', l.neg ? 'o-neg' : ''].filter(Boolean).join(' ');
     const inpN = (f, fmt) => `<td class="o-c"><input class="o-in num" data-f="${f}" inputmode="decimal" autocomplete="off" value="${esc(fmt(l[f]))}"${f === 'qtd' && l.qf ? ` title="Memória de cálculo: ${esc(l.qf)}"` : ''}></td>`;
     let h = `<tr class="${cls}" data-l="${l.id}"><td class="o-n"><span class="o-arr" data-arr="${l.id}" title="Arraste para mudar a posição">${icone('arrastar')}</span>${num}</td>
       <td class="o-dc"><div class="sugere"><textarea class="o-in o-desc o-auto" data-f="desc" rows="1" placeholder="${g ? 'Descrição do item' : 'Descrição do serviço'}">${esc(l.desc)}</textarea><div class="lista-sug o-sugs" hidden></div></div></td>`;
     if (g) h += `<td colspan="4" class="o-gcel"><span class="o-gdet" data-g="${l.id}">${l.sub.length} ${l.sub.length === 1 ? 'subitem' : 'subitens'}</span><button class="o-addb" data-a="orc-add-sub" data-l="${l.id}">${icone('mais')}Subitem</button></td><td class="o-pu"></td>`;
     else h += `${inpN('qtd', fq)}<td class="o-c"><input class="o-in o-un" data-f="un" list="orc-uns" autocomplete="off" value="${esc(l.un)}" aria-label="Unidade"></td>${inpN('mat', fv)}${inpN('mdo', fv)}<td class="num o-pu" data-u="${l.id}">${r.unit == null ? '' : fv(r.unit)}</td>`;
     h += `<td class="num o-tot" data-t="${l.id}">${totHTML(r)}</td>
-      <td class="o-ac"><button class="btn icon o-mn" data-a="orc-menu" data-k="${nivel}" data-l="${l.id}" aria-label="Opções do item ${num}">${icone('pontos')}</button></td></tr>`;
+      <td class="o-ac"><button class="btn icon o-mn" data-a="orc-menu" data-k="${nivel > 1 ? 'sub' : 'item'}" data-l="${l.id}" aria-label="Opções do item ${num}">${icone('pontos')}</button></td></tr>`;
     if (l.obs != null) {
-      h += `<tr class="o-obs ${nivel === 'sub' ? 'o-sub' : ''}" data-l="${l.id}"><td></td><td colspan="7"><div class="o-obs-b">${icone('balao')}<span class="rot">Observação</span>
+      h += `<tr class="o-obs ${nivel > 1 ? 'o-sub' : ''} ${nivel > 2 ? 'o-sub2' : ''}" data-l="${l.id}"><td></td><td colspan="7"><div class="o-obs-b">${icone('balao')}<span class="rot">Observação</span>
         <textarea class="o-in o-auto" data-f="obs" rows="1" placeholder="Escreva a observação deste item">${esc(l.obs)}</textarea></div></td>
         <td class="o-ac"><button class="btn icon" data-a="orc-obs-x" data-l="${l.id}" aria-label="Remover observação" title="Remover observação">${icone('fechar')}</button></td></tr>`;
     }
@@ -659,21 +666,18 @@
       if (!rec && e.obs) h += `<button class="o-ce-ob" data-a="orc-obs-et" data-e="${e.id}">${icone('balao')}<span>${esc(e.obs)}</span></button>`;
       if (!rec) {
         h += '<div class="o-ce-l">';
-        e.itens.forEach((l, j) => {
-          h += linhaCel(l, `${n}.${j + 1}`, false, c);
-          if (temSub(l)) l.sub.forEach((s, k) => { h += linhaCel(s, `${n}.${j + 1}.${k + 1}`, true, c); });
-        });
+        cadaLinha(e.itens, String(n), (l, num, nivel) => { h += linhaCel(l, num, nivel, c); });
         h += `<button class="o-ce-add" data-a="orc-add-item" data-e="${e.id}">${icone('mais')}Item na etapa ${n}</button></div>`;
       }
       return h + '</section>';
     }).join('') + `<button class="o-add-et" data-a="orc-add-etapa">${icone('mais')}Nova etapa</button>`;
   }
-  function linhaCel(l, num, sub, c) {
-    const r = c.m.get(l.id), g = !sub && temSub(l);
+  function linhaCel(l, num, nivel, c) {
+    const r = c.m.get(l.id), g = temSub(l);
     const det = g ? `${l.sub.length} ${l.sub.length === 1 ? 'subitem' : 'subitens'}`
       : l.neg ? 'Valores a negociar'
         : [vazio(l.qtd) ? '' : `${fq(l.qtd)} ${l.un || ''}`.trim(), r.unit != null ? `x ${fv(r.unit)}` : ''].filter(Boolean).join(' ');
-    return `<button class="o-cl ${sub ? 'sub' : ''} ${g ? 'grp' : ''}" data-a="orc-editar" data-l="${l.id}">
+    return `<button class="o-cl ${nivel > 1 ? 'sub' : ''} ${nivel > 2 ? 'sub2' : ''} ${g ? 'grp' : ''}" data-a="orc-editar" data-l="${l.id}">
       <span class="o-arr" data-arr="${l.id}" aria-label="Arrastar para mudar a posição">${icone('arrastar')}</span><span class="n">${num}</span><span class="d"><span class="tx">${esc(l.desc || 'Sem descrição')}</span>${det ? `<small>${esc(det)}</small>` : ''}${l.obs ? `<small class="ob">${icone('balao')}${esc(l.obs)}</small>` : ''}</span>
       <span class="t" data-t="${l.id}">${totHTML(r)}</span></button>`;
   }
@@ -813,7 +817,7 @@
         const ex = mapa.get(k);
         if (!ex || quando >= ex.quando) mapa.set(k, { id: l.id, desc: l.desc, un: l.un || '', mat: l.mat, mdo: l.mdo, quando, orc: o.codigo || '' });
       };
-      o.etapas.forEach((e) => e.itens.forEach((l) => { add(l); (l.sub || []).forEach(add); }));
+      o.etapas.forEach((e) => cadaLinha(e.itens, '', add));
     });
     return [...mapa.values()];
   }
@@ -874,21 +878,21 @@
   function menuLinha(el) {
     const id = el.dataset.l, o = est.orc, pos = acharLinha(o, id);
     if (!pos) return;
-    const sub = !!pos.pai, l = pos.linha, grp = !sub && temSub(l);
+    const sub = !!pos.pai, l = pos.linha, grp = temSub(l), nivel = pos.nivel;
     const it = [{ rot: 'Editar em janela', ic: 'editar', acao: () => editarLinha(id) }];
-    if (!sub) it.push({ rot: 'Adicionar subitem', ic: 'recuar', acao: () => addSub(id) });
+    if (nivel < MAX_NIVEL) it.push({ rot: 'Adicionar subitem', ic: 'recuar', acao: () => addSub(id) });
     it.push({ rot: sub ? 'Inserir subitem abaixo' : 'Inserir item abaixo', ic: 'mais', atalho: 'Ctrl+Enter', acao: () => inserirAbaixo(id) });
     it.push({ rot: 'Duplicar', ic: 'copiar', acao: () => duplicar(id) });
     it.push('-');
     it.push({ rot: 'Mover para cima', ic: 'cima', atalho: 'Alt+↑', off: pos.idx === 0, acao: () => mover(id, -1) });
     it.push({ rot: 'Mover para baixo', ic: 'baixo', atalho: 'Alt+↓', off: pos.idx === pos.lista.length - 1, acao: () => mover(id, 1) });
     if (!sub) it.push({ rot: 'Mover para outra etapa', ic: 'mover', off: o.etapas.length < 2, acao: () => moverParaEtapa(id) });
-    if (!sub) it.push({ rot: 'Virar subitem do item acima', ic: 'recuar', off: pos.idx === 0 || grp, acao: () => recuar(id) });
-    if (sub) it.push({ rot: 'Virar item da etapa', ic: 'avancar', acao: () => avancar(id) });
+    if (nivel < MAX_NIVEL) it.push({ rot: sub ? 'Virar subitem do subitem acima' : 'Virar subitem do item acima', ic: 'recuar', off: pos.idx === 0 || nivel + alturaDe(l) > MAX_NIVEL, acao: () => recuar(id) });
+    if (sub) it.push({ rot: nivel === 2 ? 'Virar item da etapa' : `Virar subitem do item ${numeroDe(o, acharLinha(o, pos.pai.id).pai.id)}`, ic: 'avancar', acao: () => avancar(id) });
     it.push('-');
     it.push({ rot: l.obs != null ? 'Remover observação' : 'Adicionar observação', ic: 'balao', acao: () => alternarObs(id) });
     if (!grp) it.push({ rot: l.neg ? 'Tirar "a negociar"' : 'Marcar "a negociar"', ic: 'etiqueta', acao: () => alternarNeg(id) });
-    const isento = grp ? l.sub.every((x) => x.semBdi) : !!l.semBdi;
+    const isento = grp ? folhasDe(l).every((x) => x.semBdi) : !!l.semBdi;
     it.push({ rot: grp ? (isento ? 'Aplicar BDI nos subitens' : 'Isentar subitens de BDI') : isento ? 'Aplicar BDI' : 'Isentar de BDI', ic: 'porcento', acao: () => alternarIsencao(id) });
     it.push('-');
     it.push({ rot: grp ? 'Excluir item e subitens' : 'Excluir', ic: 'lixo', perigo: true, acao: () => excluirLinha(id) });
@@ -938,7 +942,7 @@
     let moveu = false;
     if (alvo.pai) {
       const p = acharLinha(o, alvo.pai);
-      if (!p || p.pai) return false;
+      if (!p || p.nivel >= MAX_NIVEL) return false;
       moveu = virarGrupo(p.linha);
       const k = alvo.abaixoDe ? p.linha.sub.findIndex((x) => x.id === alvo.abaixoDe) : -1;
       p.linha.sub.splice(k >= 0 ? k + 1 : p.linha.sub.length, 0, n);
@@ -1003,12 +1007,12 @@
   }
   function recuar(id) {
     const p = acharLinha(est.orc, id);
-    if (!p || p.pai || p.idx === 0 || temSub(p.linha)) return;
+    if (!p || p.idx === 0 || p.nivel + alturaDe(p.linha) > MAX_NIVEL) return;
     mudar((o) => {
       const q = acharLinha(o, id), anterior = q.lista[q.idx - 1];
       const [l] = q.lista.splice(q.idx, 1);
       virarGrupo(anterior);
-      delete l.sub;
+      if (!temSub(l)) delete l.sub;
       anterior.sub.push(l);
     }, { foco: est.cel ? null : focoDesc(id) });
   }
@@ -1021,38 +1025,36 @@
     const rs = els.map((e) => e.getBoundingClientRect()).filter((r) => r.height);
     return rs.length ? { top: Math.min(...rs.map((r) => r.top)), bottom: Math.max(...rs.map((r) => r.bottom)), left: Math.min(...rs.map((r) => r.left)), right: Math.max(...rs.map((r) => r.right)) } : null;
   };
-  /** Onde a linha arrastada entraria com o ponteiro na altura y: { e, pai, idx, y, x0, x1 }. */
+  /** Onde a linha arrastada entraria com o ponteiro na altura y: { e, pai, idx, nivel, y, x0, x1 }.
+      Entra num grupo quando o ponteiro está nos subitens dele e a linha (com os subitens dela) cabe nos 3 níveis. */
   function alvoArraste(y) {
-    const o = est.orc, id = ARR.id, levaSub = temSub(ARR.linha);
+    const o = est.orc, id = ARR.id, alt = alturaDe(ARR.linha);
     const conts = o.etapas.map((e) => ({ e, el: document.querySelector(`#orc-plan [data-e="${e.id}"]${est.cel ? '.o-ce' : '.o-etapa'}`) })).filter((c) => c.el);
     if (!conts.length) return null;
     let c = conts.find((x) => { const r = x.el.getBoundingClientRect(); return y >= r.top && y <= r.bottom; });
     if (!c) c = y < conts[0].el.getBoundingClientRect().top ? conts[0] : conts[conts.length - 1];
     const rc = c.el.getBoundingClientRect();
-    const fim = (x0) => ({ x0, x1: rc.right - 8 });
+    const recuo = (nivel) => rc.left + 8 + (nivel - 1) * (est.cel ? 22 : 26);
+    const alvo = (pai, idx, nivel, yy, rec = false) => ({ e: c.e.id, pai, idx, nivel, y: yy, x0: recuo(nivel), x1: rc.right - 8, rec });
     const cab = c.el.querySelector(est.cel ? '.o-ce-h' : 'tr.o-et').getBoundingClientRect();
-    if (est.recolhidas.has(c.e.id)) return { e: c.e.id, pai: null, idx: c.e.itens.filter((l) => l.id !== id).length, y: cab.bottom, ...fim(rc.left + 8), rec: true };
-    const itens = c.e.itens.filter((l) => l.id !== id);
-    let idx = 0, yLinha = cab.bottom;
-    for (const l of itens) {
-      const els = linhasDom(l.id), principal = caixa(els.slice(0, 1));
-      const bloco = caixa([...els, ...(temSub(l) ? l.sub.filter((s) => s.id !== id).flatMap((s) => linhasDom(s.id)) : [])]);
-      if (!principal || !bloco) continue;
-      const meio = (principal.top + principal.bottom) / 2;
-      if (!levaSub && temSub(l) && y >= meio && y <= bloco.bottom) {
-        const subs = l.sub.filter((s) => s.id !== id);
-        let k = 0, ys = principal.bottom;
-        for (const s of subs) {
-          const b = caixa(linhasDom(s.id)); if (!b) continue;
-          if (y < (b.top + b.bottom) / 2) { ys = b.top; break; }
-          k++; ys = b.bottom;
-        }
-        return { e: c.e.id, pai: l.id, idx: k, y: ys, ...fim(rc.left + (est.cel ? 30 : 34)) };
+    if (est.recolhidas.has(c.e.id)) return alvo(null, c.e.itens.filter((l) => l.id !== id).length, 1, cab.bottom, true);
+    const fora = new Set([id, ...descendentes(ARR.linha).map((x) => x.id)]);
+    const blocoDe = (l) => caixa([...linhasDom(l.id), ...descendentes(l).filter((x) => !fora.has(x.id)).flatMap((x) => linhasDom(x.id))]);
+    const lista = (ls, pai, nivel, yIni) => {
+      const its = ls.filter((l) => l.id !== id);
+      let idx = 0, yL = yIni;
+      for (const l of its) {
+        const principal = caixa(linhasDom(l.id).slice(0, 1)), bloco = blocoDe(l);
+        if (!principal || !bloco) continue;
+        const meio = (principal.top + principal.bottom) / 2;
+        const cabeDentro = temSub(l) && nivel + alt <= MAX_NIVEL;
+        if (cabeDentro && y >= meio && y <= bloco.bottom) return lista(l.sub, l.id, nivel + 1, principal.bottom);
+        if (y < (temSub(l) ? meio : (bloco.top + bloco.bottom) / 2)) return alvo(pai, idx, nivel, bloco.top);
+        idx++; yL = bloco.bottom;
       }
-      if (y < (temSub(l) ? meio : (bloco.top + bloco.bottom) / 2)) { yLinha = bloco.top; return { e: c.e.id, pai: null, idx, y: yLinha, ...fim(rc.left + 8) }; }
-      idx++; yLinha = bloco.bottom;
-    }
-    return { e: c.e.id, pai: null, idx, y: yLinha, ...fim(rc.left + 8) };
+      return alvo(pai, idx, nivel, yL);
+    };
+    return lista(c.e.itens, null, 1, cab.bottom);
   }
   function iniciarArraste(id, ev, alca) {
     const p = acharLinha(est.orc, id); if (!p) return;
@@ -1065,14 +1067,14 @@
   }
   function comecarDeVerdade() {
     ARR.on = true;
-    const ids = [ARR.id, ...(temSub(ARR.linha) ? ARR.linha.sub.map((s) => s.id) : [])];
+    const ids = [ARR.id, ...descendentes(ARR.linha).map((x) => x.id)];
     ARR.els = ids.flatMap(linhasDom);
     ARR.els.forEach((e) => e.classList.add('o-arrastado'));
     document.body.classList.add('o-arrastando');
     const num = numeroDe(est.orc, ARR.id);
     ARR.fant = document.createElement('div');
     ARR.fant.className = 'o-fant';
-    ARR.fant.innerHTML = `<b>${esc(num)}</b> ${esc(ARR.linha.desc || 'Sem descrição')}${temSub(ARR.linha) ? ` <small>com ${ARR.linha.sub.length} ${ARR.linha.sub.length === 1 ? 'subitem' : 'subitens'}</small>` : ''}`;
+    ARR.fant.innerHTML = `<b>${esc(num)}</b> ${esc(ARR.linha.desc || 'Sem descrição')}${temSub(ARR.linha) ? ` <small>com ${descendentes(ARR.linha).length} ${descendentes(ARR.linha).length === 1 ? 'subitem' : 'subitens'}</small>` : ''}`;
     ARR.ind = document.createElement('div');
     ARR.ind.className = 'o-ind';
     document.body.append(ARR.fant, ARR.ind);
@@ -1091,7 +1093,7 @@
     ARR.alvo = a;
     if (!a) { ARR.ind.hidden = true; return; }
     ARR.ind.hidden = false;
-    ARR.ind.classList.toggle('sub', !!a.pai);
+    ARR.ind.classList.toggle('sub', a.nivel > 1);
     ARR.ind.classList.toggle('rec', !!a.rec);
     Object.assign(ARR.ind.style, { top: `${a.y - 1.5}px`, left: `${a.x0}px`, width: `${Math.max(40, a.x1 - a.x0)}px` });
   }
@@ -1127,10 +1129,10 @@
   /** Move a linha para o alvo (índices contados sem a própria linha). */
   function soltarLinha(id, a) {
     const p = acharLinha(est.orc, id); if (!p) return;
-    if (a.pai && temSub(p.linha)) return;
-    const igual = a.pai ? p.pai && p.pai.id === a.pai && p.idx === a.idx : !p.pai && p.etapa.id === a.e && p.idx === a.idx;
+    if (a.nivel + alturaDe(p.linha) - 1 > MAX_NIVEL) return;
+    const igual = (p.pai ? p.pai.id : null) === a.pai && p.etapa.id === a.e && p.idx === a.idx;
     if (igual) return;
-    const de = p.pai ? 'sub' : 'item';
+    const de = p.nivel;
     mudar((o) => {
       const q = acharLinha(o, id);
       const [l] = q.lista.splice(q.idx, 1);
@@ -1140,8 +1142,7 @@
     }, { foco: null });
     const num = numeroDe(est.orc, id);
     if (a.rec) ui.toast(`Item movido para o fim da etapa ${num.split('.')[0]}.`);
-    else if (de === 'item' && a.pai) ui.toast(`Agora é o subitem ${num}.`);
-    else if (de === 'sub' && !a.pai) ui.toast(`Agora é o item ${num}.`);
+    else if (de !== a.nivel) ui.toast(`Agora é o ${a.nivel === 1 ? 'item' : 'subitem'} ${num}.`);
     const el = linhasDom(id)[0];
     if (el) { el.classList.add('o-solto'); setTimeout(() => el.classList.remove('o-solto'), 900); }
   }
@@ -1159,8 +1160,8 @@
     mudar((o) => {
       const q = acharLinha(o, id), pai = q.pai;
       const [l] = pai.sub.splice(q.idx, 1);
-      const i = q.etapa.itens.indexOf(pai);
-      q.etapa.itens.splice(i + 1, 0, l);
+      const pp = acharLinha(o, pai.id);
+      pp.lista.splice(pp.idx + 1, 0, l);
       limparGrupo(pai);
     }, { foco: est.cel ? null : focoDesc(id) });
   }
@@ -1179,11 +1180,11 @@
   /** Item isento de BDI: entra no custo direto, mas fica fora da base do BDI. Num item com subitens, vale para todos. */
   function alternarIsencao(id) {
     const p = acharLinha(est.orc, id); if (!p) return;
-    const grp = !p.pai && temSub(p.linha);
-    const vira = grp ? !p.linha.sub.every((x) => x.semBdi) : !p.linha.semBdi;
+    const grp = temSub(p.linha);
+    const vira = grp ? !folhasDe(p.linha).every((x) => x.semBdi) : !p.linha.semBdi;
     mudar((o) => {
       const l = acharLinha(o, id).linha;
-      (grp ? l.sub : [l]).forEach((x) => { if (vira) x.semBdi = true; else delete x.semBdi; });
+      (grp ? folhasDe(l) : [l]).forEach((x) => { if (vira) x.semBdi = true; else delete x.semBdi; });
     });
     ui.toast(vira ? (grp ? 'Subitens isentos de BDI: ficam fora da base do BDI.' : 'Item isento de BDI: fica fora da base do BDI.') : 'O BDI volta a incidir sobre ' + (grp ? 'os subitens.' : 'o item.'));
   }
@@ -1191,7 +1192,7 @@
     const p = acharLinha(est.orc, id); if (!p) return;
     const num = numeroDe(est.orc, id);
     if (temSub(p.linha)) {
-      const ok = await ui.confirmar({ titulo: `Excluir o item ${num}?`, msg: `O item "${p.linha.desc || 'sem descrição'}" e os ${p.linha.sub.length} subitens dele saem do orçamento.`, ok: 'Excluir', perigo: true });
+      const ok = await ui.confirmar({ titulo: `Excluir o item ${num}?`, msg: `O item "${p.linha.desc || 'sem descrição'}" e os ${descendentes(p.linha).length} subitens dele saem do orçamento.`, ok: 'Excluir', perigo: true });
       if (!ok) return;
     }
     mudar((o) => { const q = acharLinha(o, id); q.lista.splice(q.idx, 1); if (q.pai) limparGrupo(q.pai); });
@@ -1248,7 +1249,7 @@
     const o = est.orc, i = o.etapas.findIndex((e) => e.id === eid); if (i < 0) return;
     const e = o.etapas[i];
     if (e.itens.length) {
-      const n = e.itens.reduce((s, l) => s + 1 + (l.sub ? l.sub.length : 0), 0);
+      let n = 0; cadaLinha(e.itens, '', () => { n++; });
       const ok = await ui.confirmar({ titulo: `Excluir a etapa ${i + 1}?`, msg: `"${e.titulo || 'Etapa sem nome'}" tem ${n} ${n === 1 ? 'linha' : 'linhas'} que também serão excluídas.`, ok: 'Excluir etapa', perigo: true });
       if (!ok) return;
     }
@@ -1267,20 +1268,22 @@
     if (id && !pos) return;
     const l = pos ? copia(pos.linha) : novaLinha();
     const sub = pos ? !!pos.pai : !!(alvo && alvo.pai);
-    const grp = pos && !sub && temSub(pos.linha);
+    const grp = pos && temSub(pos.linha);
+    const nivel = pos ? pos.nivel : alvo && alvo.pai ? acharLinha(o, alvo.pai).nivel + 1 : 1;
     let num;
     if (pos) num = numeroDe(o, id);
     else if (alvo.pai) { const p = acharLinha(o, alvo.pai); num = numeroDe(o, alvo.pai) + '.' + ((p.linha.sub || []).length + (temSub(p.linha) ? 1 : (vazio(p.linha.qtd) && vazio(p.linha.mat) && vazio(p.linha.mdo) ? 1 : 2))); }
     else { const e = acharEtapa(o, alvo.etapa); num = `${o.etapas.indexOf(e) + 1}.${e.itens.length + 1}`; }
     const titulo = pos ? `${sub ? 'Subitem' : 'Item'} ${num}` : `Novo ${sub ? 'subitem' : 'item'}`;
     const acoes = pos ? [
-      !sub ? ['addsub', 'recuar', 'Adicionar subitem'] : null,
+      nivel < MAX_NIVEL ? ['addsub', 'recuar', 'Adicionar subitem'] : null,
       ['abaixo', 'mais', sub ? 'Subitem abaixo' : 'Item abaixo'],
       ['dup', 'copiar', 'Duplicar'],
       ['cima', 'cima', 'Subir', pos.idx === 0],
       ['baixo', 'baixo', 'Descer', pos.idx === pos.lista.length - 1],
       !sub ? ['etapa', 'mover', 'Outra etapa', o.etapas.length < 2] : null,
-      !sub ? ['recuar', 'recuar', 'Virar subitem', pos.idx === 0 || grp] : ['avancar', 'avancar', 'Virar item'],
+      nivel < MAX_NIVEL ? ['recuar', 'recuar', 'Virar subitem', pos.idx === 0 || nivel + alturaDe(pos.linha) > MAX_NIVEL] : null,
+      sub ? ['avancar', 'avancar', nivel === 2 ? 'Virar item' : 'Subir um nível'] : null,
     ].filter(Boolean) : [];
     const m = ui.abrirModal({
       titulo, sub: pos ? '' : `Entra como ${num}`, folha: true,
@@ -1383,10 +1386,7 @@
         <div class="o-rb-v">${r.neg ? '<span class="o-negc">A negociar</span>' : `<b class="n">${brl(r.tot)}</b><small>${d ? pct(r.tot / d) : ''}</small>`}</div></div>`;
     }).join('');
     const folhas = [];
-    o.etapas.forEach((e, i) => e.itens.forEach((l, j) => {
-      if (temSub(l)) l.sub.forEach((s, k) => folhas.push({ n: `${i + 1}.${j + 1}.${k + 1}`, l: s, r: c.m.get(s.id) }));
-      else folhas.push({ n: `${i + 1}.${j + 1}`, l, r: c.m.get(l.id) });
-    }));
+    o.etapas.forEach((e, i) => cadaLinha(e.itens, String(i + 1), (l, n) => { if (!temSub(l)) folhas.push({ n, l, r: c.m.get(l.id) }); }));
     let acum = 0;
     const abc = folhas.filter((f) => f.r.tot > 0).sort((a, b) => b.r.tot - a.r.tot).map((f) => {
       const antes = d ? acum / d : 0;
@@ -1541,12 +1541,13 @@
     };
     const soma = (xs) => xs.reduce((s, x) => ({ tm: s.tm + x.tm, td: s.td + x.td, tot: s.tot + x.tot, bb: s.bb + x.bb }), { tm: 0, td: 0, tot: 0, bb: 0 });
     const ets = o.etapas.map((e) => {
-      const its = e.itens.map((l) => {
+      const no = (l) => {
         let r;
-        if (temSub(l)) { const ss = l.sub.map((s) => { const x = folha(s); m.set(s.id, x); return x; }); r = soma(ss); r.neg = ss.every((x) => x.neg); }
+        if (temSub(l)) { const ss = l.sub.map(no); r = soma(ss); r.neg = ss.every((x) => x.neg); }
         else r = folha(l);
         m.set(l.id, r); return r;
-      });
+      };
+      const its = e.itens.map(no);
       const r = soma(its); r.neg = its.length > 0 && its.some((x) => x.neg) && Math.abs(r.tot) < 0.005;
       m.set(e.id, r); return r;
     });
@@ -1563,7 +1564,8 @@
     const bt = bdiTxt(o);
     const C = [];
     const add = (k, nome, sigla, w, cls = '') => C.push({ k, tit: ret ? sigla : nome, cls, w });
-    add('i', 'Item', 'Item', ret ? 5.5 : 4.5, 'c-i');
+    const fundo = o.etapas.some((e) => e.itens.some((l) => alturaDe(l) >= 3));
+    add('i', 'Item', 'Item', fundo ? (ret ? 7.5 : 5.5) : ret ? 5.5 : 4.5, 'c-i');
     add('d', 'Descrição dos serviços', 'Descrição dos serviços', 0);
     if (!semQ) {
       add('q', 'Quant.', 'Qtd.', ret ? 7 : 6, 'num c-q');
@@ -1614,17 +1616,17 @@
       return `<tr class="${cls}"><td class="c-i">${num}</td><td colspan="${n}">${texto}</td>`
         + resto.slice(n).map((c) => `<td class="${c.cls.includes('num') ? 'num' : ''}">${c.k in vals ? vals[c.k] : ''}</td>`).join('') + '</tr>';
     };
-    const linha = (l, num, sub) => {
-      const r = V.m.get(l.id), g = !sub && temSub(l);
+    const linha = (l, num, nivel) => {
+      const r = V.m.get(l.id), g = temSub(l), sub = nivel > 1;
       let h;
-      if (g) h = agregada('pe-grp', num, esc(l.desc), somas(r));
+      if (g) h = agregada(`pe-grp${sub ? ' pe-grp2' : ''}`, num, esc(l.desc), somas(r));
       else {
         const neg = r.neg;
         const val = {
           i: num, d: esc(l.desc) + (l.semBdi ? ' ' + isen : ''), q: fq(l.qtd), u: esc(l.un), mu: neg ? '' : fv(r.mu), du: neg ? '' : fv(r.du), tm: neg ? '' : fv(r.tm), td: neg ? '' : fv(r.td),
           pu: neg ? '' : fv(r.unit), v: neg ? '' : fv(r.tot), b: neg ? '' : l.semBdi ? '<span class="pe-isen">isento</span>' : fv(r.tot * tb), t: neg ? negc : bcol ? fv(r.tot + r.bb * tb) : fv(r.tot),
         };
-        h = `<tr class="${sub ? 'pe-sub' : 'pe-it'}">${C.map((c) => `<td class="${c.k === 'd' ? 'pe-d' : c.cls}">${val[c.k]}</td>`).join('')}</tr>`;
+        h = `<tr class="${sub ? `pe-sub${nivel > 2 ? ' pe-sub2' : ''}` : 'pe-it'}">${C.map((c) => `<td class="${c.k === 'd' ? 'pe-d' : c.cls}">${val[c.k]}</td>`).join('')}</tr>`;
       }
       if (l.obs) h += `<tr class="pe-obs"><td></td><td colspan="${nc - 1}"><b>Observação:</b> ${esc(l.obs)}</td></tr>`;
       return h;
@@ -1634,10 +1636,7 @@
       const n = i + 1, re = V.m.get(et.id);
       corpo += `<tbody><tr class="pe-et"><td class="c-i">${n}</td><td colspan="${nc - 1}">${esc(et.titulo)}</td></tr>`;
       if (et.obs) corpo += `<tr class="pe-obs pe-obs-et"><td></td><td colspan="${nc - 1}"><b>Observação:</b> ${esc(et.obs)}</td></tr>`;
-      et.itens.forEach((l, j) => {
-        corpo += linha(l, `${n}.${j + 1}`, false);
-        if (temSub(l)) l.sub.forEach((s, k) => { corpo += linha(s, `${n}.${j + 1}.${k + 1}`, true); });
-      });
+      cadaLinha(et.itens, String(n), (l, num, nivel) => { corpo += linha(l, num, nivel); });
       if (!et.itens.length) corpo += `<tr class="pe-it"><td></td><td colspan="${nc - 1}" class="pe-vaz">Sem itens</td></tr>`;
       corpo += agregada('pe-st', '', `Subtotal da etapa ${n}`, somas(re));
       corpo += '</tbody>';
@@ -1658,7 +1657,7 @@
         <tr class="f"><td>Valor final da obra${emb ? ` (${incl})` : ''}</td><td class="num">${brl(V.final)}</td></tr></table>
         ${op.extenso ? `<p class="pe-ext">${esc(cap(extenso(V.final)))}.</p>` : ''}</div>`;
     const temNeg = calcular(o).nNeg > 0;
-    const temIsen = o.etapas.some((et) => et.itens.some((l) => (temSub(l) ? l.sub : [l]).some((x) => x.semBdi && !x.neg)));
+    const temIsen = o.etapas.some((et) => et.itens.some((l) => folhasDe(l).some((x) => x.semBdi && !x.neg)));
     const notas = [emb ? (semQ ? `Valores com ${incl}.` : `Preços unitários com ${incl}, arredondados ao centavo.`) : '', temNeg ? 'Itens "a negociar" não entram no valor final.' : '', temIsen ? (emb ? 'Os itens marcados "sem BDI" não têm o BDI embutido no preço.' : `${esc(o.bdiRotulo)} (${bdiTxt(o)}) calculado sobre ${brl(V.baseBdi)}: os itens marcados "sem BDI" ficam fora dessa base.`) : ''].filter(Boolean);
     return `<div class="rp pe ${op.orientacao === 'retrato' ? 'retrato' : ''} ${nc <= 6 ? 'resumida' : ''} ${nc >= 10 ? 'cheia' : ''} ${semQ ? 'semquant' : ''}">
       <div class="rp-head"><div class="rp-logo"><img src="img/logo.png?v=${Sis.VERSAO}" alt="${esc(e.nome)}"></div>
@@ -1834,22 +1833,23 @@
       merges.push(`C${r - 1}:K${r - 1}`);
       linhaObs(et);
       const nivel1 = [];
-      et.itens.forEach((l, j) => {
-        const num = `${n}.${j + 1}`;
-        if (temSub(l)) {
-          const x = V.m.get(l.id);
-          const rg = r;
-          add([cel.t('B', num, X.grN), cel.t('C', l.desc, X.grD), cel.e('D', X.grE), cel.e('E', X.grE), cel.e('F', X.grE), cel.e('G', X.grE),
-            cel.f('H', `SUM(H${rg + 1}:H${rg + 1})`, x.tm, X.grV), cel.f('I', `SUM(I${rg + 1}:I${rg + 1})`, x.td, X.grV), cel.e('J', X.grE), cel.f('K', `SUM(K${rg + 1}:K${rg + 1})`, x.tot, X.grV)], alt(l.desc, 64));
-          linhaObs(l);
-          let ult = r;
-          l.sub.forEach((s, k) => { ult = linhaFolha(s, `${num}.${k + 1}`, true); linhaObs(s); });
-          const ln = linhas.find((y) => y.r === rg);
-          const ini = rg + 1 + (l.obs ? 1 : 0);
-          ln.cels = ln.cels.map(([c, xml]) => [c, xml.replace(/SUM\(([HIK])\d+:[HIK]\d+\)/, (m0, col) => `SUM(${col}${ini}:${col}${ult})`)]);
-          nivel1.push(rg);
-        } else { nivel1.push(linhaFolha(l, num, false)); linhaObs(l); }
-      });
+      /** Linha (e subitens) no Excel; devolve a linha da planilha. O grupo soma só os filhos diretos. */
+      const bloco = (l, num, nivel) => {
+        if (!temSub(l)) { const rr = linhaFolha(l, num, nivel > 1); linhaObs(l); return rr; }
+        const x = V.m.get(l.id);
+        const rg = r;
+        add([cel.t('B', num, X.grN), cel.t('C', l.desc, X.grD), cel.e('D', X.grE), cel.e('E', X.grE), cel.e('F', X.grE), cel.e('G', X.grE),
+          cel.f('H', `SUM(H${rg + 1}:H${rg + 1})`, x.tm, X.grV), cel.f('I', `SUM(I${rg + 1}:I${rg + 1})`, x.td, X.grV), cel.e('J', X.grE), cel.f('K', `SUM(K${rg + 1}:K${rg + 1})`, x.tot, X.grV)], alt(l.desc, 64));
+        linhaObs(l);
+        const filhos = l.sub.map((s, k) => bloco(s, `${num}.${k + 1}`, nivel + 1));
+        const simples = l.sub.every((s) => !temSub(s));
+        const ini = rg + 1 + (l.obs ? 1 : 0);
+        const fx = (col) => (simples ? `SUM(${col}${ini}:${col}${filhos[filhos.length - 1]})` : filhos.map((k) => `${col}${k}`).join('+'));
+        const ln = linhas.find((y) => y.r === rg);
+        ln.cels = ln.cels.map(([c, xml]) => [c, xml.replace(/SUM\(([HIK])\d+:[HIK]\d+\)/, (m0, col) => fx(col))]);
+        return rg;
+      };
+      et.itens.forEach((l, j) => { nivel1.push(bloco(l, `${n}.${j + 1}`, 1)); });
       const x = V.m.get(et.id);
       const temGrupo = et.itens.some(temSub);
       const f = !nivel1.length ? '0' : temGrupo ? nivel1.map((k) => `K${k}`).join('+') : `SUM(K${nivel1[0]}:K${nivel1[nivel1.length - 1]})`;
@@ -2032,7 +2032,7 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
     }
     const o = { titulo: '', modalidade: 'global', bdi: null, bdiRotulo: '', imposto: null, impostoRotulo: '', etapas: [] };
     const renum = [];
-    let etapa = null, grupo = null, ultimo = null, ultimoItem = null;
+    let etapa = null, grupo = null, ultimo = null, ultimoItem = null, ultimoSub = null;
     const numCel = (v) => (vazio(v) || typeof v !== 'number' ? (typeof v === 'string' && /^-?[\d.,]+$/.test(v.trim()) ? Number(v.replace(/\./g, '').replace(',', '.')) : null) : v);
     for (const l of linhas) {
       const c = l.cel;
@@ -2068,17 +2068,17 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       if (/^(sub ?total|valor final|total geral|total)/i.test(norm(rot))) continue;
       const nItem = typeof c[cols.item] === 'number' ? c[cols.item] : null;
       if (nItem !== null && Number.isInteger(nItem) && ds) {
-        etapa = { id: rid(), titulo: ds, itens: [] }; o.etapas.push(etapa); grupo = null; ultimo = null; ultimoItem = null;
+        etapa = { id: rid(), titulo: ds, itens: [] }; o.etapas.push(etapa); grupo = null; ultimo = null; ultimoItem = null; ultimoSub = null;
         continue;
       }
       if (!etapa) { etapa = { id: rid(), titulo: 'ETAPA', itens: [] }; o.etapas.push(etapa); }
       const ref = nItem !== null ? String(nItem) : it;
       if (!ref && ds) {
         grupo = novaLinha({ desc: ds, sub: [] }); delete grupo.un; delete grupo.qtd; delete grupo.mat; delete grupo.mdo;
-        etapa.itens.push(grupo); ultimo = grupo; ultimoItem = grupo;
+        etapa.itens.push(grupo); ultimo = grupo; ultimoItem = grupo; ultimoSub = null;
         continue;
       }
-      if (!/^\d+(\.\d+){1,2}$/.test(ref)) continue;
+      if (!/^\d+(\.\d+){1,3}$/.test(ref)) continue;
       const va = c[cols.u], vb = c[cols.q];
       let un = '', qtd = null;
       if (typeof va === 'number' && typeof vb !== 'number') { qtd = va; un = txt(vb); }
@@ -2086,26 +2086,27 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       else { un = txt(va || vb); qtd = numCel(va) ?? numCel(vb); }
       const semBdi = /\(\s*sem\s+bdi\s*\)\s*$/i.test(ds);
       const lin = novaLinha({ desc: semBdi ? txt(ds.replace(/\(\s*sem\s+bdi\s*\)\s*$/i, '')) : ds, un, qtd: vazio(qtd) ? null : Math.round(qtd * 1e6) / 1e6, mat: vazio(numCel(c[cols.mat])) ? null : Math.round(numCel(c[cols.mat]) * 1e6) / 1e6, mdo: vazio(numCel(c[cols.mdo])) ? null : Math.round(numCel(c[cols.mdo]) * 1e6) / 1e6 });
-      if (vazio(lin.qtd) && vazio(lin.mat) && vazio(lin.mdo)) lin.neg = true;
+      if (vazio(lin.qtd) && vazio(lin.mat) && vazio(lin.mdo)) { lin.neg = true; lin._vazio = true; }
       if (semBdi) lin.semBdi = true;
       const niveis = ref.split('.').length;
-      if (niveis === 3 && ultimoItem) {
-        virarGrupo(ultimoItem); ultimoItem.sub.push(lin);
+      // linha numerada sem valores seguida de linhas mais fundas é o título do grupo (o Excel exporta assim)
+      const grupoDe = (x) => { if (x._vazio && !temSub(x)) { delete x.neg; x.sub = []; } else virarGrupo(x); delete x._vazio; };
+      if (niveis === 4 && ultimoSub) {
+        grupoDe(ultimoSub); ultimoSub.sub.push(lin);
+      } else if (niveis >= 3 && ultimoItem) {
+        grupoDe(ultimoItem); ultimoItem.sub.push(lin); ultimoSub = lin;
       } else if (grupo && niveis === 2) {
-        grupo.sub.push(lin);
+        grupo.sub.push(lin); ultimoSub = lin;
       } else {
-        grupo = null; etapa.itens.push(lin); ultimoItem = lin;
+        grupo = null; etapa.itens.push(lin); ultimoItem = lin; ultimoSub = null;
       }
       lin._ref = ref;
       ultimo = lin;
     }
-    o.etapas.forEach((e, i) => e.itens.forEach((l, j) => {
-      l.sub = l.sub && l.sub.length ? l.sub : undefined;
-      if (!l.sub) delete l.sub;
-      const chk = (x, num) => { if (x._ref && x._ref.split('.').length === num.split('.').length && x._ref !== num) renum.push([x._ref, num]); delete x._ref; };
-      chk(l, `${i + 1}.${j + 1}`);
-      (l.sub || []).forEach((s, k) => chk(s, `${i + 1}.${j + 1}.${k + 1}`));
-    }));
+    const limpa = (ls) => ls.forEach((l) => { if (Array.isArray(l.sub) && l.sub.length) limpa(l.sub); else delete l.sub; });
+    o.etapas.forEach((e) => limpa(e.itens));
+    const chk = (x, num) => { if (x._ref && x._ref.split('.').length === num.split('.').length && x._ref !== num) renum.push([x._ref, num]); delete x._ref; delete x._vazio; };
+    o.etapas.forEach((e, i) => cadaLinha(e.itens, String(i + 1), (l, num) => chk(l, num)));
     return { orc: o, renum };
   }
   A['orc-importar'] = () => {
