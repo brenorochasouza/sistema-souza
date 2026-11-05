@@ -32,6 +32,7 @@
     etiqueta: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1"/>',
     porcento: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
     arrastar: '<circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.4" fill="currentColor" stroke="none"/>',
+    vinculo: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
   });
 
   /* ---------------- constantes ---------------- */
@@ -97,6 +98,22 @@
     return { v: Math.round(v * 1e6) / 1e6, f: expr ? orig.replace(/^=/, '') : '' };
   }
 
+  /** Número em pt-BR dentro de uma conta (1.234,5 ou 1234,5) para o formato do JavaScript. */
+  const tokNum = (tok) => (tok.includes(',') ? tok.replace(/\./g, '').replace(',', '.') : /^\d{1,3}(\.\d{3})+$/.test(tok) ? tok.replace(/\./g, '') : tok);
+  /** Conta da quantidade: números, + - * / ( ), N% e a quantidade de outros itens ({{id}}). valorRef(id) devolve a quantidade. */
+  function avaliarConta(txt, valorRef) {
+    let t = String(txt ?? '').trim().replace(/^=/, '').replace(/R\$/gi, '').replace(/\s+/g, '');
+    if (!t) return { v: null };
+    t = t.replace(/(\d[\d.,]*)%/g, '($1/100)').replace(/\d[\d.,]*/g, tokNum);
+    let falta = false;
+    t = t.replace(/\{\{([^}]+)\}\}/g, (m, id) => { const x = valorRef ? valorRef(id) : null; if (x == null) { falta = true; return '0'; } return `(${Number(x).toFixed(6)})`; });
+    if (!/^[0-9.+\-*/()]+$/.test(t) || /[.]{2,}|\d\.\d+\./.test(t)) return null;
+    let v;
+    try { v = Function('"use strict";return (' + t + ')')(); } catch { return null; }
+    if (typeof v !== 'number' || !isFinite(v)) return null;
+    return { v: Math.round(v * 1e6) / 1e6, falta };
+  }
+
   /** Valor por extenso em reais. */
   function extenso(valor) {
     const U = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
@@ -155,7 +172,7 @@
   const alturaDe = (l) => (temSub(l) ? 1 + Math.max(...l.sub.map(alturaDe)) : 1);
   const novaLinha = (p = {}) => Object.assign({ id: rid(), desc: '', un: '', qtd: null, mat: null, mdo: null }, p);
   const novaEtapa = (titulo = '') => ({ id: rid(), titulo, itens: [] });
-  function novosIds(l) { l.id = rid(); if (l.sub) l.sub.forEach(novosIds); if (l.itens) l.itens.forEach(novosIds); return l; }
+  function novosIds(l, mapa = null) { const velho = l.id; l.id = rid(); if (mapa && velho) mapa.set(velho, l.id); if (l.sub) l.sub.forEach((x) => novosIds(x, mapa)); if (l.itens) l.itens.forEach((x) => novosIds(x, mapa)); return l; }
 
   function config() {
     const r = store.get(T, ID_CONFIG);
@@ -179,6 +196,7 @@
     o.impostoBase = o.impostoBase === 'custo' ? 'custo' : 'custo_bdi';
     o.impostoRotulo = o.impostoRotulo || CONFIG_PADRAO.impostoRotulo;
     o.impressao = opImpressao(o.impressao);
+    recalcularQtds(o);
     return o;
   }
   const registro = (id) => { const r = store.get(T, id); return r && r.tipo === 'orcamento' ? r : null; };
@@ -296,7 +314,10 @@
   /** Altera o orçamento aberto guardando o estado anterior para desfazer. */
   function mudar(fn, { pintar: repintar = true, foco = null } = {}) {
     empilhar(JSON.stringify(est.orc));
+    const antes = qtdsAgora(est.orc);
     fn(est.orc);
+    consertarRefs(est.orc, antes);
+    recalcularQtds(est.orc);
     salvarDepois();
     if (repintar) pintar(foco);
   }
@@ -341,6 +362,82 @@
     return null;
   }
   const acharEtapa = (o, id) => o.etapas.find((e) => e.id === id) || null;
+  /* ---------- quantidade com a quantidade de outro item ----------
+     Na tela a referência aparece como [1.2] (ou #1.2); guardada como {{id}}, segue o item quando ele muda de número. */
+  const temRef = (qf) => /\{\{[^}]+\}\}/.test(qf || '');
+  const refsDe = (qf) => [...String(qf || '').matchAll(/\{\{([^}]+)\}\}/g)].map((m) => m[1]);
+  function mapaLinhas(o) { const m = new Map(); o.etapas.forEach((e) => cadaLinha(e.itens, '', (l) => m.set(l.id, l))); return m; }
+  function linhaPorNumero(o, num) { let achou = null; o.etapas.forEach((e, i) => cadaLinha(e.itens, String(i + 1), (l, n) => { if (n === num) achou = l; })); return achou; }
+  /** A quantidade do item "de" depende (direta ou indiretamente) da do item "alvo"? */
+  function usaQtdDe(o, de, alvo, m = mapaLinhas(o), vistos = new Set()) {
+    if (vistos.has(de)) return false; vistos.add(de);
+    const l = m.get(de); if (!l) return false;
+    return refsDe(l.qf).some((id) => id === alvo || usaQtdDe(o, id, alvo, m, vistos));
+  }
+  /** Fórmula guardada para mostrar: {{id}} vira [número]. */
+  const qfTexto = (o, qf) => String(qf || '').replace(/\{\{([^}]+)\}\}/g, (m, id) => `[${numeroDe(o, id) || '?'}]`);
+  /** Lê a quantidade digitada: número, conta, N% e [1.2] ou #1.2 para usar a quantidade de outro item. */
+  function lerQtd(s, o, eu) {
+    const orig = String(s ?? '').trim();
+    if (orig === '=') return null;
+    if (!/[[#%]/.test(orig)) return lerNumero(s);
+    let erro = '';
+    const m = mapaLinhas(o);
+    const f = orig.replace(/^=/, '').trim().replace(/\[\s*(\d+(?:\.\d+){1,3})\s*\]|#(\d+(?:\.\d+){1,3})/g, (x, a, b) => {
+      const num = a || b, alvo = linhaPorNumero(o, num);
+      if (!alvo) erro = erro || `Não existe o item ${num}.`;
+      else if (temSub(alvo)) erro = erro || `O item ${num} é a soma dos subitens dele e não tem quantidade própria. Use um dos subitens.`;
+      else if (eu && (alvo.id === eu || usaQtdDe(o, alvo.id, eu, m))) erro = erro || `O item ${num} já usa a quantidade deste item (referência circular).`;
+      else return `{{${alvo.id}}}`;
+      return '0';
+    });
+    if (erro) return { erro };
+    const r = avaliarConta(f, (id) => { const l = m.get(id); return l ? nn(l.qtd) : null; });
+    if (!r) return null;
+    return { v: r.v, f: temRef(f) || /[+*/()%]/.test(f) || /.-/.test(f) ? f : '' };
+  }
+  /** Refaz as quantidades que usam outros itens. Devolve os ids que mudaram. */
+  function recalcularQtds(o) {
+    const m = mapaLinhas(o), pronto = new Map(), andando = new Set(), mudou = new Set();
+    const qtdDe = (id) => {
+      const l = m.get(id);
+      if (!l || temSub(l)) return null;
+      if (!temRef(l.qf)) return nn(l.qtd);
+      if (pronto.has(id)) return pronto.get(id);
+      if (andando.has(id)) return null;
+      andando.add(id);
+      const r = avaliarConta(l.qf, qtdDe);
+      andando.delete(id);
+      if (r && r.v != null && !r.falta && r.v !== l.qtd) { l.qtd = r.v; mudou.add(id); }
+      pronto.set(id, nn(l.qtd));
+      return nn(l.qtd);
+    };
+    m.forEach((l, id) => { if (temRef(l.qf)) qtdDe(id); });
+    return mudou;
+  }
+  /** Depois de excluir ou agrupar um item, quem usava a quantidade dele passa a usar o subitem (se for o mesmo valor) ou o número fixo. */
+  function consertarRefs(o, antes) {
+    const m = mapaLinhas(o);
+    m.forEach((l) => {
+      if (!temRef(l.qf)) return;
+      l.qf = l.qf.replace(/\{\{([^}]+)\}\}/g, (x, id) => {
+        const alvo = m.get(id);
+        if (alvo && !temSub(alvo)) return x;
+        const v = antes.get(id);
+        const f0 = alvo && folhasDe(alvo)[0];
+        if (f0 && v != null && nn(f0.qtd) === v) return `{{${f0.id}}}`;
+        return v == null ? '0' : String(v).replace('.', ',');
+      });
+      if (!/[+*/()%{]/.test(l.qf) && !/.-/.test(l.qf)) delete l.qf;
+    });
+  }
+  const qtdsAgora = (o) => { const a = new Map(); mapaLinhas(o).forEach((l, id) => { if (!temSub(l)) a.set(id, nn(l.qtd)); }); return a; };
+  /** Numa cópia de itens, as referências entre os itens copiados passam a apontar para as cópias. */
+  function remapearRefs(raizes, mapa) {
+    const vai = (l) => { if (temRef(l.qf)) l.qf = l.qf.replace(/\{\{([^}]+)\}\}/g, (x, id) => (mapa.has(id) ? `{{${mapa.get(id)}}}` : x)); (l.sub || []).forEach(vai); (l.itens || []).forEach(vai); };
+    raizes.forEach(vai);
+  }
+
   /** Número da linha na planilha (1.2, 1.2.3 ou 1.2.3.4). */
   function numeroDe(o, id) {
     let achou = '';
@@ -479,7 +576,7 @@
           if (base === 'padrao') etapas = ETAPAS_PADRAO.map((t) => novaEtapa(t));
           if (base === 'copia') {
             const src = listaOrc().find((o) => o.id === $('[name=origem]', m.el).value);
-            if (src) etapas = copia(src.etapas).map(novosIds);
+            if (src) { const mapa = new Map(); etapas = copia(src.etapas).map((e) => novosIds(e, mapa)); remapearRefs(etapas, mapa); }
           }
           const id = criarOrc(Object.assign({ codigo, titulo, clienteId: sel.valor().clienteId, modalidade: $('[name=modalidade]', m.el).value, bdi: bdi.v, etapas }, imp));
           m.fechar();
@@ -611,7 +708,7 @@
         <div class="actions" style="justify-content:center;margin-top:14px"><button class="btn" data-a="orc-etapas-padrao">Usar as etapas padrão</button><button class="btn primary" data-a="orc-add-etapa">${icone('mais')}Nova etapa</button></div></div></div>`;
     }
     return tool + `<div id="orc-plan">${est.cel ? planilhaCel(o, c) : planilhaPC(o, c)}</div>`
-      + (est.cel ? '' : `<p class="o-dica">Enter vai para a linha de baixo · Ctrl+Enter insere um item abaixo · Alt+↑/↓ move a linha · nas quantidades e preços dá para digitar contas, como 12,5*3+2</p>`);
+      + (est.cel ? '' : `<p class="o-dica">Enter vai para a linha de baixo · Ctrl+Enter insere um item abaixo · Alt+↑/↓ move a linha · nas quantidades e preços dá para digitar contas, como 12,5*3+2 · na quantidade, =[1.2] usa a do item 1.2 e =[1.2]*10% usa 10% dela (com a conta aberta, clique na outra linha)</p>`);
   }
 
   function planilhaPC(o, c) {
@@ -641,7 +738,7 @@
   function linhaPC(l, num, nivel, c) {
     const r = c.m.get(l.id), g = temSub(l);
     const cls = ['o-it', nivel > 1 ? 'o-sub' : '', nivel > 2 ? 'o-sub2' : '', g ? 'o-grp' : '', l.neg ? 'o-neg' : ''].filter(Boolean).join(' ');
-    const inpN = (f, fmt) => `<td class="o-c"><input class="o-in num" data-f="${f}" inputmode="decimal" autocomplete="off" value="${esc(fmt(l[f]))}"${f === 'qtd' && l.qf ? ` title="Memória de cálculo: ${esc(l.qf)}"` : ''}></td>`;
+    const inpN = (f, fmt) => `<td class="o-c"><input class="o-in num${f === 'qtd' && temRef(l.qf) ? ' o-fx' : ''}" data-f="${f}" inputmode="decimal" autocomplete="off" value="${esc(fmt(l[f]))}"${f === 'qtd' && l.qf ? ` title="${temRef(l.qf) ? 'Quantidade calculada' : 'Memória de cálculo'}: =${esc(qfTexto(est.orc, l.qf))}"` : ''}></td>`;
     let h = `<tr class="${cls}" data-l="${l.id}"><td class="o-n"><span class="o-arr" data-arr="${l.id}" title="Arraste para mudar a posição">${icone('arrastar')}</span>${num}</td>
       <td class="o-dc"><div class="sugere"><textarea class="o-in o-desc o-auto" data-f="desc" rows="1" placeholder="${g ? 'Descrição do item' : 'Descrição do serviço'}">${esc(l.desc)}</textarea><div class="lista-sug o-sugs" hidden></div></div></td>`;
     if (g) h += `<td colspan="4" class="o-gcel"><span class="o-gdet" data-g="${l.id}">${l.sub.length} ${l.sub.length === 1 ? 'subitem' : 'subitens'}</span><button class="o-addb" data-a="orc-add-sub" data-l="${l.id}">${icone('mais')}Subitem</button></td><td class="o-pu"></td>`;
@@ -683,6 +780,30 @@
   }
 
   /** Atualiza só os valores calculados enquanto se digita. */
+  /** Quantidades que usam a do item editado mudam na hora, na tela. */
+  function atualizarDependentes(campo) {
+    const mudou = recalcularQtds(est.orc);
+    mudou.forEach((id) => {
+      const inp = $(`#orc-corpo tr[data-l="${id}"] [data-f="qtd"]`);
+      const l = acharLinha(est.orc, id);
+      if (inp && inp !== campo && l) { inp.value = fq(l.linha.qtd); inp.classList.add('o-fx-mudou'); setTimeout(() => inp.classList.remove('o-fx-mudou'), 700); }
+    });
+  }
+  /* Com a conta aberta (=...), clicar em outra linha põe a quantidade dela na conta, como no Excel. */
+  document.addEventListener('mousedown', (ev) => {
+    const at = document.activeElement;
+    if (!at || at.dataset.f !== 'qtd' || !at.closest('#orc-corpo') || !/^=/.test(at.value)) return;
+    const i0 = at.selectionStart ?? at.value.length, i1 = at.selectionEnd ?? i0;
+    if (!/[=+\-*/(]\s*$/.test(at.value.slice(0, i0))) return;
+    const tr = ev.target.closest && ev.target.closest('#orc-corpo tr.o-it[data-l]');
+    if (!tr || tr.contains(at)) return;
+    const p = acharLinha(est.orc, tr.dataset.l); if (!p || temSub(p.linha)) return;
+    ev.preventDefault();
+    const ins = `[${numeroDe(est.orc, p.linha.id)}]`;
+    at.value = at.value.slice(0, i0) + ins + at.value.slice(i1);
+    at.setSelectionRange(i0 + ins.length, i0 + ins.length);
+    at.dispatchEvent(new Event('input', { bubbles: true }));
+  }, true);
   function atualizarCalculos() {
     const o = est.orc; if (!o) return;
     const c = calcular(o);
@@ -708,7 +829,8 @@
     if (t.classList.contains('num')) {
       const a = alvoCampo(t);
       if (a) {
-        t.value = t.dataset.f === 'qtd' && a.obj.qf ? a.obj.qf : cru(a.obj[t.dataset.f]);
+        t._antes = { v: a.obj[t.dataset.f], qf: a.obj.qf };
+        t.value = t.dataset.f === 'qtd' && a.obj.qf ? '=' + qfTexto(est.orc, a.obj.qf) : cru(a.obj[t.dataset.f]);
         t.select(); t._selFoco = true;
       }
     }
@@ -728,11 +850,14 @@
     const f = t.dataset.f;
     if (t.tagName === 'TEXTAREA') crescer(t);
     if (NUMS.has(f)) {
-      const r = lerNumero(t.value);
-      t.classList.toggle('erro', r === null);
-      if (r === null) return;
+      const r = f === 'qtd' ? lerQtd(t.value, est.orc, a.obj.id) : lerNumero(t.value);
+      const ruim = r === null || !!(r && r.erro);
+      t.classList.toggle('erro', ruim);
+      t._erroQtd = r && r.erro ? r.erro : '';
+      if (ruim) return;
       a.obj[f] = r.v;
-      if (f === 'qtd') { if (r.f) a.obj.qf = r.f; else delete a.obj.qf; }
+      if (f === 'qtd') { if (r.f) a.obj.qf = r.f; else delete a.obj.qf; t.classList.toggle('o-fx', temRef(r.f)); }
+      atualizarDependentes(t);
       if (a.obj.neg && r.v !== null) { delete a.obj.neg; const tr = t.closest('tr'); if (tr) tr.classList.remove('o-neg'); }
       atualizarCalculos();
     } else a.obj[f] = t.value;
@@ -745,9 +870,18 @@
     const f = t.dataset.f;
     let repintar = false;
     if (NUMS.has(f)) {
-      t.classList.remove('erro');
+      if (t.classList.contains('erro')) {
+        // conta que ficou errada: volta ao valor de antes de entrar no campo
+        if (t._erroQtd) ui.toast(t._erroQtd);
+        if (t._antes) {
+          a.obj[f] = t._antes.v;
+          if (f === 'qtd') { if (t._antes.qf) a.obj.qf = t._antes.qf; else delete a.obj.qf; t.classList.toggle('o-fx', temRef(a.obj.qf)); }
+          atualizarDependentes(t); atualizarCalculos();
+        }
+      }
+      t.classList.remove('erro'); t._erroQtd = ''; t._antes = null;
       t.value = f === 'qtd' ? fq(a.obj[f]) : fv(a.obj[f]);
-      if (f === 'qtd') t.title = a.obj.qf ? 'Memória de cálculo: ' + a.obj.qf : '';
+      if (f === 'qtd') t.title = a.obj.qf ? `${temRef(a.obj.qf) ? 'Quantidade calculada' : 'Memória de cálculo'}: =${qfTexto(est.orc, a.obj.qf)}` : '';
     } else if (f === 'obs') {
       if (!t.value.trim()) { delete a.obj.obs; repintar = true; } else a.obj.obs = t.value.trim();
     } else {
@@ -977,7 +1111,7 @@
     let nid = null;
     mudar((o) => {
       const p = acharLinha(o, id); if (!p) return;
-      const n = novosIds(copia(p.linha)); nid = n.id;
+      const mapa = new Map(); const n = novosIds(copia(p.linha), mapa); remapearRefs([n], mapa); nid = n.id;
       p.lista.splice(p.idx + 1, 0, n);
     }, { foco: null });
     if (nid && !est.cel) { const f = $(focoDesc(nid)); if (f) f.focus(); }
@@ -1195,8 +1329,10 @@
       const ok = await ui.confirmar({ titulo: `Excluir o item ${num}?`, msg: `O item "${p.linha.desc || 'sem descrição'}" e os ${descendentes(p.linha).length} subitens dele saem do orçamento.`, ok: 'Excluir', perigo: true });
       if (!ok) return;
     }
+    const saem = new Set([id, ...descendentes(p.linha).map((x) => x.id)]);
+    const usam = []; est.orc.etapas.forEach((e, i) => cadaLinha(e.itens, String(i + 1), (l, n) => { if (!saem.has(l.id) && refsDe(l.qf).some((r) => saem.has(r))) usam.push(n); }));
     mudar((o) => { const q = acharLinha(o, id); q.lista.splice(q.idx, 1); if (q.pai) limparGrupo(q.pai); });
-    ui.toast(`Item ${num} excluído. Ctrl+Z ou o botão Desfazer traz de volta.`);
+    ui.toast(`Item ${num} excluído.${usam.length ? ` ${usam.length === 1 ? 'O item' : 'Os itens'} ${usam.join(', ')} ${usam.length === 1 ? 'usava' : 'usavam'} a quantidade dele e ${usam.length === 1 ? 'ficou' : 'ficaram'} com o número fixo.` : ''} Ctrl+Z ou o botão Desfazer traz de volta.`);
   }
 
   /* ---------------- operações nas etapas ---------------- */
@@ -1239,7 +1375,7 @@
     });
   }
   function duplicarEtapa(eid) {
-    mudar((o) => { const i = o.etapas.findIndex((e) => e.id === eid); const n = novosIds(copia(o.etapas[i])); n.titulo = (n.titulo + ' (cópia)').trim(); o.etapas.splice(i + 1, 0, n); });
+    mudar((o) => { const i = o.etapas.findIndex((e) => e.id === eid); const mapa = new Map(); const n = novosIds(copia(o.etapas[i]), mapa); remapearRefs([n], mapa); n.titulo = (n.titulo + ' (cópia)').trim(); o.etapas.splice(i + 1, 0, n); });
     ui.toast('Etapa duplicada.');
   }
   function moverEtapa(eid, dir) {
@@ -1270,6 +1406,8 @@
     const sub = pos ? !!pos.pai : !!(alvo && alvo.pai);
     const grp = pos && temSub(pos.linha);
     const nivel = pos ? pos.nivel : alvo && alvo.pai ? acharLinha(o, alvo.pai).nivel + 1 : 1;
+    const refOps = [];
+    o.etapas.forEach((e, i) => cadaLinha(e.itens, String(i + 1), (x, n) => { if (!temSub(x) && x.id !== id && !(id && usaQtdDe(o, x.id, id)) && !vazio(x.qtd)) refOps.push({ n, x }); }));
     let num;
     if (pos) num = numeroDe(o, id);
     else if (alvo.pai) { const p = acharLinha(o, alvo.pai); num = numeroDe(o, alvo.pai) + '.' + ((p.linha.sub || []).length + (temSub(p.linha) ? 1 : (vazio(p.linha.qtd) && vazio(p.linha.mat) && vazio(p.linha.mdo) ? 1 : 2))); }
@@ -1290,12 +1428,19 @@
       corpo: `<label class="f req"><span>Descrição${grp ? ' do item' : ' do serviço'}</span><div class="sugere"><textarea class="inp" name="desc" rows="3" placeholder="Ex.: Pintura em parede acrílico acetinado">${esc(l.desc)}</textarea><div class="lista-sug" hidden></div></div></label>
         ${grp ? `<p class="small muted o-grp-nota">${icone('info')}Este item é a soma dos ${pos.linha.sub.length} subitens dele. Quantidade e preços ficam nos subitens.</p>` : `
         <div class="grid2 o-mg">
-          <label class="f"><span>Quantidade</span><input class="inp money" name="qtd" inputmode="decimal" value="${esc(l.qf || cru(l.qtd))}" autocomplete="off"></label>
+          <label class="f"><span>Quantidade</span><input class="inp money" name="qtd" inputmode="decimal" value="${esc(l.qf ? '=' + qfTexto(o, l.qf) : cru(l.qtd))}" autocomplete="off"></label>
           <label class="f"><span>Unidade</span><input class="inp" name="un" list="orc-uns" value="${esc(l.un)}" autocomplete="off"></label>
           <div class="o-uns span2">${UNIDADES.slice(0, 9).map((u) => `<button type="button" class="o-un-b ${l.un === u ? 'on' : ''}" data-u="${esc(u)}">${esc(u)}</button>`).join('')}</div>
           <label class="f"><span>Material (R$ por unidade)</span><input class="inp money" name="mat" inputmode="decimal" value="${esc(cru(l.mat))}" autocomplete="off"></label>
           <label class="f"><span>Mão de obra (R$ por unidade)</span><input class="inp money" name="mdo" inputmode="decimal" value="${esc(cru(l.mdo))}" autocomplete="off"></label>
         </div>
+        ${refOps.length ? `<div class="o-refq"><button type="button" class="btn suave sm" data-refq>${icone('vinculo')}Usar a quantidade de outro item</button>
+          <div class="o-refq-p" hidden>
+            <label class="f"><span>Item</span><select class="inp" name="refq">${refOps.map(({ n, x }) => `<option value="${n}">${esc(n)} ${esc((x.desc || 'Sem descrição').slice(0, 60))} (${fq(x.qtd)}${x.un ? ' ' + esc(x.un) : ''})</option>`).join('')}</select></label>
+            <label class="f o-refq-pc"><span>Percentual</span><input class="inp money" name="refp" inputmode="decimal" value="100" autocomplete="off"></label>
+            <button type="button" class="btn primary sm" data-refq-ok>Usar</button>
+          </div>
+          <p class="small muted o-refq-dica">Também dá para digitar: <b>=[1.2]</b> usa a quantidade do item 1.2, <b>=[1.2]*10%</b> usa 10% dela, <b>=[1.2]+[1.3]</b> soma as duas.</p></div>` : ''}
         <div class="o-prev" data-prev></div>
         <label class="chk"><input type="checkbox" name="neg" ${l.neg ? 'checked' : ''}> <span>Valores a negociar (fica fora do total)</span></label>
         <label class="chk"><input type="checkbox" name="semBdi" ${l.semBdi ? 'checked' : ''}> <span>Isento de BDI (entra no custo, fica fora da base do BDI)</span></label>`}
@@ -1306,13 +1451,29 @@
         const prev = $('[data-prev]', el);
         const atualizar = () => {
           if (!prev) return;
-          const v = ['qtd', 'mat', 'mdo'].map((n) => lerNumero(q(n).value));
-          ['qtd', 'mat', 'mdo'].forEach((n, i) => q(n).classList.toggle('erro', v[i] === null));
+          const v = ['qtd', 'mat', 'mdo'].map((n) => (n === 'qtd' ? lerQtd(q(n).value, o, pos ? id : null) : lerNumero(q(n).value)));
+          ['qtd', 'mat', 'mdo'].forEach((n, i) => q(n).classList.toggle('erro', v[i] === null || !!(v[i] && v[i].erro)));
+          if (v[0] && v[0].erro) { prev.innerHTML = `<span class="aviso-campo">${esc(v[0].erro)}</span>`; return; }
           if (v.some((x) => x === null)) { prev.innerHTML = '<span class="aviso-campo">Confira os números digitados.</span>'; return; }
           const [qq, a, b] = v.map((x) => nn(x.v));
-          prev.innerHTML = `<span>Preço unitário <b class="n">${brl(a + b)}</b></span><span>Total <b class="n">${q('neg').checked ? 'A negociar' : brl(qq * (a + b))}</b></span>`;
+          const conta = v[0].f ? `<span>Quantidade <b class="n">${fq(v[0].v)}</b></span>` : '';
+          prev.innerHTML = `${conta}<span>Preço unitário <b class="n">${brl(a + b)}</b></span><span>Total <b class="n">${q('neg').checked ? 'A negociar' : brl(qq * (a + b))}</b></span>`;
         };
         if (prev) { ['qtd', 'mat', 'mdo'].forEach((n) => q(n).addEventListener('input', atualizar)); q('neg').addEventListener('change', atualizar); atualizar(); }
+        const bRef = $('[data-refq]', el);
+        if (bRef) {
+          const painel = $('.o-refq-p', el);
+          bRef.addEventListener('click', () => { painel.hidden = !painel.hidden; if (!painel.hidden) q('refq').focus(); });
+          $('[data-refq-ok]', el).addEventListener('click', () => {
+            const pc = lerNumero(q('refp').value);
+            if (!pc || pc.v == null) { q('refp').classList.add('erro'); q('refp').focus(); return; }
+            q('refp').classList.remove('erro');
+            const pcs = String(pc.v).replace('.', ',');
+            q('qtd').value = `=[${q('refq').value}]${pc.v === 100 ? '' : `*${pcs}%`}`;
+            painel.hidden = true;
+            atualizar(); q('qtd').focus();
+          });
+        }
         $$('.o-un-b', el).forEach((b) => b.addEventListener('click', () => { q('un').value = b.dataset.u; $$('.o-un-b', el).forEach((x) => x.classList.toggle('on', x === b)); }));
         const desc = q('desc');
         ui.sugestoes(desc, desc.nextElementSibling, fonteCatalogo(id), (it) => {
@@ -1349,7 +1510,8 @@
       if (!grp) {
         const v = {};
         for (const n of ['qtd', 'mat', 'mdo']) {
-          const r = lerNumero(q(n).value);
+          const r = n === 'qtd' ? lerQtd(q(n).value, o, pos ? id : null) : lerNumero(q(n).value);
+          if (r && r.erro) { q(n).classList.add('erro'); q(n).focus(); ui.toast(r.erro); return false; }
           if (r === null) { q(n).classList.add('erro'); q(n).focus(); return false; }
           v[n] = r;
         }
@@ -1477,7 +1639,7 @@
     salvarAgora();
     const o = est.orc;
     const d = copia(o); delete d.id;
-    const id = criarOrc(Object.assign(d, { codigo: o.codigo || '', titulo: (o.titulo || 'Orçamento') + ' (cópia)', status: 'elaboracao', statusEm: null, data: hojeISO(), etapas: copia(o.etapas).map(novosIds), criadoEm: new Date().toISOString() }));
+    const id = criarOrc(Object.assign(d, { codigo: o.codigo || '', titulo: (o.titulo || 'Orçamento') + ' (cópia)', status: 'elaboracao', statusEm: null, data: hojeISO(), etapas: (() => { const mapa = new Map(); const es = copia(o.etapas).map((e) => novosIds(e, mapa)); remapearRefs(es, mapa); return es; })(), criadoEm: new Date().toISOString() }));
     location.hash = `#/orcamentos/${id}`;
     ui.toast('Orçamento duplicado com o mesmo número. Se precisar, troque em Dados e condições.');
   }
@@ -1811,13 +1973,17 @@
     add([cel.t('B', 'ITEM', X.hd), cel.t('C', 'DESCRIÇÃO DOS SERVIÇOS', X.hd), cel.t('D', 'QUANT.', X.hd), cel.t('E', 'UNID.', X.hd), cel.t('F', 'MATERIAL', X.hd), cel.t('G', 'MÃO DE OBRA', X.hd), cel.t('H', 'TOTAL MAT', X.hd), cel.t('I', 'TOTAL MDO', X.hd), cel.t('J', 'P. UNIT. R$', X.hd), cel.t('K', 'R$ TOTAL', X.hd)], 22);
     r = 6;
     const subtotais = [], isentosK = [];
+    /* quantidade com conta vira fórmula no Excel; a quantidade de outro item vira a célula dele (D da linha) */
+    const linhaDe = new Map();
+    const contaExcel = (qf) => String(qf).replace(/^=/, '').replace(/\s+/g, '').replace(/\{\{([^}]+)\}\}/g, '§$1§').replace(/\d[\d.,]*/g, tokNum);
     const linhaFolha = (l, num, sub) => {
       const x = V.m.get(l.id);
+      linhaDe.set(l.id, r);
       const [sN, sD, sU, sQ, sV] = sub ? [X.sbN, X.sbD, X.sbU, X.sbQ, X.sbV] : [X.itN, X.itD, X.itU, X.itQ, X.itV];
       const q = l.qtd, a = l.neg ? null : l.mat, b = l.neg ? null : l.mdo;
       const qq = nn(q), aa = nn(a), bb = nn(b);
       if (l.semBdi && !l.neg) isentosK.push(r);
-      add([cel.t('B', num, sN), cel.t('C', l.desc + (l.semBdi ? ' (sem BDI)' : ''), sD), cel.n('D', q, sQ), cel.t('E', l.un, sU), cel.n('F', a, sV), cel.n('G', b, sV),
+      add([cel.t('B', num, sN), cel.t('C', l.desc + (l.semBdi ? ' (sem BDI)' : ''), sD), l.qf ? cel.f('D', contaExcel(l.qf), q, sQ) : cel.n('D', q, sQ), cel.t('E', l.un, sU), cel.n('F', a, sV), cel.n('G', b, sV),
         cel.f('H', `F${r}*D${r}`, qq * aa, sV), cel.f('I', `G${r}*D${r}`, qq * bb, sV), cel.f('J', `G${r}+F${r}`, aa + bb, sV),
         l.neg ? cel.t('K', 'A NEGOCIAR', X.neg) : cel.f('K', `J${r}*D${r}`, x.tot, sV)], alt(l.desc, 64));
       return r - 1;
@@ -1880,6 +2046,8 @@
     }
     const ultima = r - 1;
 
+    const mq = mapaLinhas(o);
+    linhas.forEach((ln) => { ln.cels = ln.cels.map(([c, xml]) => [c, xml.replace(/§([^§]+)§/g, (m, id) => (linhaDe.has(id) ? `D${linhaDe.get(id)}` : xn(nn((mq.get(id) || {}).qtd))))]); });
     const sheetRows = linhas.map((l) => `<row r="${l.r}"${l.ht ? ` ht="${l.ht}" customHeight="1"` : ''}>${l.cels.sort((a, b) => a[0].localeCompare(b[0])).map((c) => c[1]).join('')}</row>`).join('');
     const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:K${ultima}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0" zoomScale="90" zoomScaleNormal="90"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="C6" sqref="C6"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="2.7" customWidth="1"/><col min="2" max="2" width="9.5" customWidth="1"/><col min="3" max="3" width="62" customWidth="1"/><col min="4" max="4" width="10.5" customWidth="1"/><col min="5" max="5" width="8" customWidth="1"/><col min="6" max="10" width="15.5" customWidth="1"/><col min="11" max="11" width="17.5" customWidth="1"/></cols><sheetData>${sheetRows}</sheetData><mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells><pageMargins left="0.4" right="0.4" top="0.5" bottom="0.6" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L&amp;8${xe(e.nome)} · Orçamento nº ${xe(o.codigo || '')}&amp;R&amp;8Página &amp;P de &amp;N</oddFooter></headerFooter><drawing r:id="rId1"/></worksheet>`;
