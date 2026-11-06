@@ -1019,7 +1019,7 @@
 
   /* importar serviços de um orçamento ou colar do Excel */
   A['rdo-sv-orc'] = () => {
-    const lista = Sis.orcamentos ? Sis.orcamentos.lista().sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))) : [];
+    const lista = Sis.orcamentos ? Sis.orcamentos.lista().filter((o) => o.status !== 'recusado').sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))) : [];
     if (!lista.length) { ui.toast('Nenhum orçamento no módulo Orçamentos.'); return; }
     const o = obraAberta(); if (!o) return;
     ui.abrirModal({

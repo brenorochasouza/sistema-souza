@@ -493,6 +493,8 @@ mark{background:none;color:var(--brand-700);font-weight:600}
 details.quit{grid-column:1/-1;margin-top:4px}
 details.quit summary{cursor:pointer;font-size:13px;color:var(--muted);padding:8px 0}
 details.quit .cl-cards{margin-top:8px}
+details.o-rec{margin-top:14px}
+details.o-rec .o-grid{margin-top:8px;opacity:.8}
 .filtro{display:flex;align-items:center;gap:8px;background:var(--ink);color:#fff;border-radius:11px;padding:9px 12px;margin-bottom:12px;font-size:13.5px}
 .filtro button{all:unset;cursor:pointer;margin-left:auto;display:grid;place-items:center}
 .novo-srv{background:#fff;border:1px solid var(--line-2);border-radius:var(--radius);padding:16px;margin-bottom:14px;display:flex;flex-direction:column;gap:12px}
