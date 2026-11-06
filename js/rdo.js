@@ -27,6 +27,8 @@
     baixo: '<path d="m6 9 6 6 6-6"/>',
     pontos: '<circle cx="12" cy="5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="19" r="1.3"/>',
     nuvemPend: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/><path d="M12 12v4M12 9v.01"/>',
+    relogio: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    pessoa: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
   };
   Object.keys(ICS).forEach((k) => { if (!Sis.ICONES[k]) Sis.ICONES[k] = ICS[k]; });
 
@@ -54,7 +56,7 @@
     o.etapas.forEach((e) => { e.id = e.id || rid(); e.servicos = Array.isArray(e.servicos) ? e.servicos : []; e.servicos.forEach((s) => { s.id = s.id || rid(); }); });
     o.grupos = Array.isArray(o.grupos) ? o.grupos : [];
     o.equipamentos = Array.isArray(o.equipamentos) ? o.equipamentos : [];
-    o.assinantes = Object.assign({ responsavel: {}, fiscal: {}, contratante: {} }, o.assinantes || {});
+    o.assinantes = Object.assign({ responsavel: {} }, o.assinantes || {});
     o.acessos = Object.assign({}, o.acessos || {});
     return o;
   }
@@ -70,8 +72,23 @@
     B.store.salvar('diarios', d.id, 'diario', dados, d.obraId);
   }
   const cfgRdo = () => B.config();
-  const urlPortal = () => location.origin + location.pathname.replace(/[^/]*$/, '') + 'clientesobras/';
-  const logoSouza = () => `img/logo.png?v=${Sis.VERSAO}`;
+  /** Caminho até a raiz do sistema (a entrada /rdo fica uma pasta abaixo). */
+  const RAIZ = window.SOUZA_RAIZ || '';
+  const urlEntrada = () => new URL(RAIZ + 'rdo/', location.href).href;
+  const logoSouza = () => `${RAIZ}img/logo.png?v=${Sis.VERSAO}`;
+  /* perfis: master (você), engenharia (cria e edita diários) e cliente (só vê os aprovados, pela tela do portal) */
+  const ehMaster = () => B.perfil() === 'master';
+  const ehEng = () => B.perfil() === 'engenharia';
+  const stDe = (d) => R.statusDe(d);
+  const chipSt = (d) => `<span class="chip ${stDe(d)[1]}">${stDe(d)[0]}</span>`;
+  /** O diário pode ser editado por quem está logado? Engenharia: só rascunho. Master: rascunho e aguardando aprovação. */
+  const editavel = (d) => !!d && (d.status === 'rascunho' || !d.status || (d.status === 'revisao' && ehMaster()));
+  /** Quem é você nos registros do diário (criou, enviou, devolveu). */
+  function euMesmo() {
+    const e = B.eu() || {};
+    if (ehMaster()) { const r = cfgRdo().responsavel; return { uid: e.uid || '', nome: r.nome || 'Responsável técnico', cargo: r.cargo || '', registro: r.registro || '' }; }
+    return { uid: e.uid || '', nome: e.nome || '', cargo: e.funcao || '', registro: e.registro || '', assinatura: e.assinatura || '' };
+  }
   /** "2,5", "2.5", "1.250,5" e "10%" viram número. */
   function lerNum(v) {
     let t = String(v ?? '').replace('%', '').trim();
@@ -139,10 +156,12 @@
   function htmlConectar(relogin) {
     const fixo = B.projetoFixo();
     const ant = B.projeto();
-    const email = B.conta() || (Sis.sync.info().email || '');
+    const eu = B.eu() || {};
+    let email = eu.usuario || B.conta();
+    if (!email) { try { email = Sis.sync.info().email || ''; } catch { email = ''; } }
     return `${fixo ? '' : `<label class="f"><span>Endereço do projeto do RDO (Project URL)</span><input class="inp" name="url" value="${esc(ant ? ant.url : '')}" placeholder="https://xxxxxxxx.supabase.co" autocapitalize="off" spellcheck="false"></label>
       <label class="f"><span>Chave pública do projeto do RDO (publishable ou anon)</span><input class="inp" name="chave" value="${esc(ant ? ant.chave : '')}" autocapitalize="off" spellcheck="false"></label>`}
-      <label class="f"><span>E-mail</span><input class="inp" type="email" name="email" value="${esc(email)}" autocapitalize="off"></label>
+      <label class="f"><span>${eu.usuario ? 'Usuário' : 'E-mail'}</span><input class="inp" ${eu.usuario ? '' : 'type="email"'} name="email" value="${esc(email)}" autocapitalize="off" spellcheck="false"></label>
       <label class="f"><span>Senha deste projeto</span><input class="inp" type="password" name="senha" autocomplete="current-password" ${relogin || email ? 'autofocus' : ''}></label>`;
   }
   async function conectarDe(raiz) {
@@ -173,18 +192,43 @@
     const prog = R.progresso(o, ds);
     const ult = ds[ds.length - 1];
     const pz = R.prazo(o, ds, R.dataRef(o, ds));
-    return { ds, prog, ult, pz, rasc: ds.filter((d) => d.status !== 'aprovado').length };
+    return { ds, prog, ult, pz, rasc: ds.filter((d) => d.status !== 'aprovado' && d.status !== 'revisao').length, rev: ds.filter((d) => d.status === 'revisao').length };
   }
   const barra = (pct, cls = '') => `<div class="r-bar ${cls}"><i style="width:${Math.max(0, Math.min(100, pct || 0)).toFixed(1)}%"></i></div>`;
+  /** Diários de todas as obras com a situação pedida (para a fila de aprovação e os devolvidos). */
+  const diariosCom = (fn) => obras().flatMap((o) => diariosDe(o.id).filter(fn).map((d) => ({ o, d })));
+  function htmlFila() {
+    if (ehMaster()) {
+      const fila = diariosCom((d) => d.status === 'revisao').sort((a, b) => String((a.d.elaborador || {}).em || '').localeCompare(String((b.d.elaborador || {}).em || '')));
+      if (!fila.length) return '';
+      return `<section class="card r-fila"><div class="hd"><div><h3>Aguardando a sua aprovação <span class="r-cont">${fila.length}</span></h3><p>Diários enviados pela engenharia. Abra, confira e aprove ou devolva para ajuste.</p></div></div>
+        <div class="r-dlist">${fila.map(({ o, d }) => `<a class="r-dl" href="#/rdo/${esc(o.id)}/d/${esc(d.id)}"><span class="r-dl-n">nº ${esc(d.numero)}</span>
+          <span class="r-dl-d"><b>${dataBR(d.data)}</b><small>${esc(o.nome)}</small></span>
+          <span class="r-dl-i"><span>Enviado por ${esc((d.elaborador && d.elaborador.nome) || 'engenharia')}${d.elaborador && d.elaborador.em ? ' em ' + R.dataHora(d.elaborador.em) : ''}</span></span>${chipSt(d)}</a>`).join('')}</div></section>`;
+    }
+    if (ehEng()) {
+      const dev = diariosCom((d) => (d.status === 'rascunho' || !d.status) && d.devolucao);
+      if (!dev.length) return '';
+      return `<section class="card r-fila dev"><div class="hd"><div><h3>Devolvidos para ajuste <span class="r-cont">${dev.length}</span></h3><p>Ajuste e envie de novo para aprovação.</p></div></div>
+        <div class="r-dlist">${dev.map(({ o, d }) => `<a class="r-dl" href="#/rdo/${esc(o.id)}/d/${esc(d.id)}"><span class="r-dl-n">nº ${esc(d.numero)}</span>
+          <span class="r-dl-d"><b>${dataBR(d.data)}</b><small>${esc(o.nome)}</small></span>
+          <span class="r-dl-i"><span>${esc(d.devolucao.obs || 'Sem observação')}</span></span>${chipSt(d)}</a>`).join('')}</div></section>`;
+    }
+    return '';
+  }
   function telaLista(el) {
     const todas = obras();
     const lista = todas.filter((o) => (est.filtro === 'concluida' ? o.situacao === 'concluida' : o.situacao !== 'concluida'));
     const cfg = cfgRdo();
-    const faltaCfg = !cfg.ponte.url || !cfg.assinatura;
-    el.innerHTML = `<div class="pagehead"><div><h1>Diário de obra</h1><p>${todas.filter((o) => o.situacao !== 'concluida').length} em andamento</p></div>
-      <div class="actions"><a class="btn" href="#/rdo/config">${icone('config')}Configurações</a><button class="btn primary" data-a="rdo-nova-obra">${icone('mais')}Nova obra</button></div></div>
+    const master = ehMaster();
+    const faltaCfg = master && (!cfg.ponte.url || !cfg.assinatura);
+    const eu = B.eu() || {};
+    el.innerHTML = `<div class="pagehead"><div><h1>Diário de obra</h1><p>${master ? `${todas.filter((o) => o.situacao !== 'concluida').length} em andamento` : `${esc(eu.nome || '')}${eu.funcao ? ' · ' + esc(eu.funcao) : ''}`}</p></div>
+      <div class="actions">${master ? `<a class="btn" href="#/rdo/acessos">${icone('chave')}Acessos</a><a class="btn" href="#/rdo/config">${icone('config')}Configurações</a><button class="btn primary" data-a="rdo-nova-obra">${icone('mais')}Nova obra</button>` : `<a class="btn" href="#/rdo/conta">${icone('config')}Minha conta</a>`}</div></div>
       ${syncHTML()}
       ${faltaCfg ? `<a class="r-aviso" href="#/rdo/config">${icone('info')}<span>${[!cfg.ponte.url && 'Configure a ponte do Google Drive para guardar as fotos em alta qualidade', !cfg.assinatura && 'envie a imagem da sua assinatura'].filter(Boolean).join(' e ')}.</span></a>` : ''}
+      ${ehEng() && !eu.assinatura ? `<a class="r-aviso" href="#/rdo/conta">${icone('info')}<span>Envie a imagem da sua assinatura em Minha conta. Ela sai nos diários que você enviar para aprovação.</span></a>` : ''}
+      ${htmlFila()}
       <div class="seg r-filtro"><button class="${est.filtro !== 'concluida' ? 'on' : ''}" data-a="rdo-filtro" data-f="andamento">Em andamento</button><button class="${est.filtro === 'concluida' ? 'on' : ''}" data-a="rdo-filtro" data-f="concluida">Concluídas</button></div>
       ${lista.length ? `<div class="r-obras">${lista.map((o) => {
         const r = resumoObra(o);
@@ -193,16 +237,17 @@
           <small>${esc(o.contratante || 'Sem contratante')}</small>
           <div class="r-obra-p"><span>Avanço</span><b>${R.fmtPct(r.prog.geral, 1)}</b></div>${barra(r.prog.geral)}
           <div class="r-obra-m"><span>${r.pz.decorrido !== null && r.pz.atual ? `Dia ${r.pz.decorrido} de ${r.pz.atual}` : 'Prazo não informado'}</span><span>${r.ult ? `Último: nº ${esc(r.ult.numero)} em ${dataBR(r.ult.data)}` : 'Sem diários'}</span></div></a>
-          <div class="r-obra-a">${r.rasc ? `<span class="chip atencao">${r.rasc} ${r.rasc === 1 ? 'rascunho' : 'rascunhos'}</span>` : '<span></span>'}<button class="btn sm suave" data-a="rdo-novo-diario" data-o="${esc(o.id)}">${icone('mais')}Diário de hoje</button></div></div>`;
-      }).join('')}</div>` : `<div class="card"><div class="empty"><b>${est.filtro === 'concluida' ? 'Nenhuma obra concluída' : 'Nenhuma obra em andamento'}</b>${est.filtro === 'concluida' ? '' : 'Cadastre a obra com a lista de serviços do contrato para começar os diários.'}</div></div>`}`;
+          <div class="r-obra-a"><span class="r-obra-ch">${r.rev ? `<span class="chip atencao">${r.rev} aguardando aprovação</span>` : ''}${r.rasc ? `<span class="chip neutro">${r.rasc} ${r.rasc === 1 ? 'rascunho' : 'rascunhos'}</span>` : ''}</span><button class="btn sm suave" data-a="rdo-novo-diario" data-o="${esc(o.id)}">${icone('mais')}Diário de hoje</button></div></div>`;
+      }).join('')}</div>` : `<div class="card"><div class="empty"><b>${est.filtro === 'concluida' ? 'Nenhuma obra concluída' : master ? 'Nenhuma obra em andamento' : 'Nenhuma obra liberada para você'}</b>${est.filtro === 'concluida' ? '' : master ? 'Cadastre a obra com a lista de serviços do contrato para começar os diários.' : 'Quando a Souza Engenharia liberar uma obra para o seu acesso, ela aparece aqui.'}</div></div>`}`;
     pintarSync();
   }
   A['rdo-filtro'] = (b) => { est.filtro = b.dataset.f; Sis.desenhar(true); };
 
   A['rdo-nova-obra'] = () => {
+    if (!ehMaster()) return;
     let sel;
     ui.abrirModal({
-      titulo: 'Nova obra', sub: 'Depois você completa os serviços do contrato, a mão de obra e os assinantes no cadastro.',
+      titulo: 'Nova obra', sub: 'Depois você completa os serviços do contrato, a mão de obra e quem acessa a obra.',
       corpo: `<div class="grid2">
         <label class="f req span2"><span>Nome da obra</span><input class="inp" name="nome" placeholder="Ex.: Construção da quadra" autofocus></label>
         <label class="f"><span>Contrato</span><input class="inp" name="contrato" placeholder="Ex.: SE253.QUA" autocapitalize="characters"></label>
@@ -225,8 +270,7 @@
             contratante: cli ? cli.nome : '', local: cli ? cli.endereco || '' : '', responsavel: cfg.responsavel.nome,
             dataInicio: $('[name=inicio]', m.el).value || '', prazoDias: prazo > 0 ? prazo : null, situacao: 'andamento',
             etapas: [], grupos: R.GRUPOS_PADRAO.map(([g, fs]) => ({ id: rid(), nome: g, funcoes: fs.map((f) => ({ id: rid(), nome: f })) })), equipamentos: [],
-            assinantes: { responsavel: Object.assign({}, cfg.responsavel), fiscal: {}, contratante: { nome: '', cargo: cli ? `Representante de ${cli.nome}` : '' } },
-            acessos: { cliente: gerarCodigo(), fiscal: gerarCodigo(), contratante: gerarCodigo() }, criadoEm: new Date().toISOString(),
+            assinantes: { responsavel: Object.assign({}, cfg.responsavel) }, criadoEm: new Date().toISOString(),
           });
           salvarObra(o);
           m.fechar();
@@ -245,11 +289,12 @@
     const o = obra(id);
     if (!o) { el.innerHTML = '<div class="card"><div class="empty"><b>Obra não encontrada</b><a href="#/rdo">Ver as obras</a></div></div>'; return; }
     normalizarObra(o);
+    if (aba === 'cadastro' && !ehMaster()) aba = 'diarios';
     const r = resumoObra(o);
     const kpis = aba === 'diarios' || aba === 'servicos' ? `<div class="r-kpis">
       <div><span>Avanço da obra</span><b>${R.fmtPct(r.prog.geral, 1)}</b>${barra(r.prog.geral)}</div>
       <div><span>Prazo</span><b>${r.pz.decorrido !== null && r.pz.atual ? `Dia ${r.pz.decorrido} de ${r.pz.atual}` : '-'}</b><small>${r.pz.aVencer === null || !r.pz.atual ? 'Informe início e prazo no cadastro' : r.pz.aVencer >= 0 ? `${R.dias(r.pz.aVencer)} a vencer · término ${dataBR(r.pz.termino)}` : `${R.dias(-r.pz.aVencer)} além do prazo`}</small></div>
-      <div><span>Diários</span><b>${r.ds.length}</b><small>${r.rasc ? `${r.rasc} em rascunho` : 'Todos aprovados'}</small></div>
+      <div><span>Diários</span><b>${r.ds.length}</b><small>${[r.rev && `${r.rev} aguardando aprovação`, r.rasc && `${r.rasc} em rascunho`].filter(Boolean).join(' · ') || (r.ds.length ? 'Todos aprovados' : 'Nenhum ainda')}</small></div>
       <div><span>Último diário</span><b>${r.ult ? `nº ${esc(r.ult.numero)}` : '-'}</b><small>${r.ult ? `${dataBR(r.ult.data)}, ${R.diaSemana(r.ult.data).toLowerCase()}` : 'Nenhum ainda'}</small></div>
     </div>` : '';
     let corpo = '';
@@ -262,11 +307,23 @@
         <div class="tit"><b>${esc(o.nome)}</b><span>${esc([o.contrato, o.contratante].filter(Boolean).join(' · ') || 'Obra')}</span></div>
         <div class="actions">${o.drivePasta ? `<a class="btn icon" href="${esc(o.drivePasta)}" target="_blank" rel="noopener" title="Fotos da obra no Drive" aria-label="Fotos da obra no Drive">${icone('galeria')}</a>` : ''}<button class="btn primary" data-a="rdo-novo-diario" data-o="${esc(o.id)}">${icone('mais')}<span>Novo diário</span></button></div></div>
       ${syncHTML()}
-      <nav class="ob-abas">${ABAS.map(([k, n, ic]) => `<a href="#/rdo/${esc(o.id)}${k === 'diarios' ? '' : '/' + k}" class="${k === aba ? 'ativo' : ''}">${icone(ic)}${n}</a>`).join('')}</nav>
+      <nav class="ob-abas">${ABAS.filter(([k]) => k !== 'cadastro' || ehMaster()).map(([k, n, ic]) => `<a href="#/rdo/${esc(o.id)}${k === 'diarios' ? '' : '/' + k}" class="${k === aba ? 'ativo' : ''}">${icone(ic)}${n}</a>`).join('')}</nav>
       ${kpis}
       <div id="rdo-corpo">${corpo}</div></div>`;
     pintarSync();
-    if (aba === 'cadastro') ligarCadastro(el, o);
+    if (aba === 'cadastro') { ligarCadastro(el, o); pintarAcessosObra(o); }
+  }
+  /** Lista de quem acessa a obra, no cadastro (vem do banco, precisa de internet). */
+  async function pintarAcessosObra(o) {
+    const alvo = () => $('[data-q="acessos-obra"]');
+    if (!navigator.onLine) { if (alvo()) alvo().innerHTML = '<p class="small muted">Sem internet para mostrar os acessos agora.</p>'; return; }
+    try {
+      const lista = (await B.rpc('rdo_acessos_lista')) || [];
+      const daObra = lista.filter((a) => (a.obras || []).includes(o.id));
+      if (!alvo()) return;
+      alvo().innerHTML = daObra.length ? `<div class="r-ac-mini">${daObra.map((a) => `<span class="r-ac-p ${a.ativo ? '' : 'off'}">${icone('pessoa')}<b>${esc(a.nome)}</b><small>${a.perfil === 'engenharia' ? 'Engenharia' : 'Cliente'}${a.ativo ? '' : ' · desativado'}</small></span>`).join('')}</div>`
+        : '<p class="small muted">Ninguém além de você. Em "Gerenciar acessos" você cria o acesso da engenharia e dos clientes e libera esta obra.</p>';
+    } catch (e) { if (alvo()) alvo().innerHTML = `<p class="small muted">Não foi possível carregar os acessos: ${esc(e.message)}</p>`; }
   }
 
   /* ---------------- aba Diários ---------------- */
@@ -274,13 +331,13 @@
     const semServ = !R.servicos(o).length;
     const ds = r.ds.slice().reverse();
     const clima = (d) => R.PERIODOS.map(([k]) => (d.clima && d.clima[k] && d.clima[k].tempo ? `<span title="${esc(R.nomeDe(R.TEMPOS, d.clima[k].tempo))}">${R.iconeTempo(d.clima[k].tempo)}</span>` : '<span class="r-sem">-</span>')).join('');
-    return `${semServ ? `<a class="r-aviso" href="#/rdo/${esc(o.id)}/cadastro">${icone('info')}<span>Cadastre os serviços do contrato para ligar atividades e fotos a cada serviço.</span></a>` : ''}
+    return `${semServ && ehMaster() ? `<a class="r-aviso" href="#/rdo/${esc(o.id)}/cadastro">${icone('info')}<span>Cadastre os serviços do contrato para ligar atividades e fotos a cada serviço.</span></a>` : ''}
       ${ds.length ? `<div class="card r-dlist">${ds.map((d) => `<a class="r-dl" href="#/rdo/${esc(o.id)}/d/${esc(d.id)}">
         <span class="r-dl-n">nº ${esc(d.numero)}</span>
         <span class="r-dl-d"><b>${dataBR(d.data)}</b><small>${R.diaSemana(d.data)}</small></span>
         <span class="r-dl-c">${clima(d)}</span>
         <span class="r-dl-i"><span>${(d.atividades || []).length} ${(d.atividades || []).length === 1 ? 'atividade' : 'atividades'}</span><span>${R.totalMao(o, d)} na obra</span><span>${(d.fotos || []).length} ${(d.fotos || []).length === 1 ? 'foto' : 'fotos'}</span>${(d.ocorrencias || []).length ? `<span class="r-oc-n">${(d.ocorrencias || []).length} ${(d.ocorrencias || []).length === 1 ? 'ocorrência' : 'ocorrências'}</span>` : ''}</span>
-        <span class="chip ${d.status === 'aprovado' ? 'ok' : 'neutro'}">${d.status === 'aprovado' ? 'Aprovado' : 'Rascunho'}</span></a>`).join('')}</div>`
+        ${chipSt(d)}</a>`).join('')}</div>`
         : `<div class="card"><div class="empty"><b>Nenhum diário ainda</b>Toque em "Novo diário" para registrar o dia de hoje.</div></div>`}`;
   }
 
@@ -310,6 +367,7 @@
             mao: cp ? copia(cp.mao || {}) : {}, equip: cp ? copia(cp.equip || {}) : {},
             atividades: cp ? copia(cp.atividades || []).map((a) => Object.assign(a, { id: rid() })) : [],
             ocorrencias: [], fotos: [], obs: '', criadoEm: new Date().toISOString(),
+            criadoPor: (({ uid: u, nome }) => ({ uid: u, nome }))(euMesmo()),
           };
           gravarDiario(d);
           m.fechar();
@@ -374,20 +432,23 @@
     if (!o || !d) { el.innerHTML = `<div class="card"><div class="empty"><b>Diário não encontrado</b><a href="#/rdo/${esc(obraId)}">Voltar para a obra</a></div></div>`; return; }
     normalizarObra(o);
     const aprovado = d.status === 'aprovado';
+    const pode = editavel(d);
     const topo = `<div class="ob-topo r-ed-topo"><a class="btn icon" href="#/rdo/${esc(o.id)}" aria-label="Voltar para a obra">${icone('esq')}</a>
       <div class="tit"><b>RDO nº ${esc(d.numero)}</b><span>${R.diaSemana(d.data)}, ${dataBR(d.data)} · ${esc(o.nome)}</span></div>
-      <div class="actions"><span class="chip ${aprovado ? 'ok' : 'neutro'}">${aprovado ? 'Aprovado' : 'Rascunho'}</span>${aprovado ? '' : '<span class="o-salvo ok" id="rdo-salvo">Salvo</span>'}
+      <div class="actions">${chipSt(d)}${pode ? '<span class="o-salvo ok" id="rdo-salvo">Salvo</span>' : ''}
         ${d.drivePasta ? `<a class="btn icon" href="${esc(d.drivePasta)}" target="_blank" rel="noopener" title="Fotos em alta qualidade no Drive" aria-label="Fotos em alta qualidade">${icone('galeria')}</a>` : ''}
         <button class="btn icon" data-a="rdo-imprimir-diario" title="Imprimir ou salvar PDF" aria-label="Imprimir ou salvar PDF">${icone('imprimir')}</button>
         <button class="btn icon" data-a="rdo-diario-mais" aria-label="Mais opções">${icone('pontos')}</button></div></div>`;
-    if (aprovado) {
-      const aps = aprovacoesDe(o.id);
-      const papeis = R.PAPEIS.filter(([k]) => k !== 'responsavel' && o.assinantes[k] && o.assinantes[k].nome);
-      el.innerHTML = `<div class="r-ed">${topo}${syncHTML()}
-        <div class="card r-apv"><div class="bd"><div class="r-apv-l">${icone('aprovar')}<div><b>Aprovado em ${R.dataHora(d.aprovadoEm)}</b><small>${esc((d.aprovador && d.aprovador.nome) || '')}. Este diário aparece no portal do cliente.</small></div></div>
-          ${papeis.length ? `<div class="r-apv-p">${papeis.map(([k, rot]) => { const a = R.aprovacao(aps, d, k); return `<span class="chip ${a ? 'ok' : 'neutro'}">${rot}: ${a ? `aprovado em ${R.dataHora(a.em)}` : 'aguardando'}</span>`; }).join('')}</div>` : ''}
-          <div class="actions"><button class="btn" data-a="rdo-reabrir">${icone('editar')}Reabrir para editar</button><button class="btn" data-a="rdo-imprimir-diario">${icone('imprimir')}Imprimir ou salvar PDF</button></div></div></div>
-        <div class="r-papel" data-papel>${R.diarioHTML({ obra: o, diario: d, diarios: diariosDe(o.id), aprovacoes: aps, empresa: cfgRdo().empresa, logoSouza: logoSouza(), fotoSrc: (f) => B.fotos.src(f) })}</div></div>`;
+    if (!pode) {
+      // aprovado (todos) ou aguardando aprovação (engenharia): só leitura
+      const quem = (d.elaborador && d.elaborador.nome) || '';
+      const card = aprovado
+        ? `<div class="card r-apv"><div class="bd"><div class="r-apv-l">${icone('aprovar')}<div><b>Aprovado em ${R.dataHora(d.aprovadoEm)}</b><small>${esc((d.aprovador && d.aprovador.nome) || '')}${quem ? `. Elaborado por ${esc(quem)}` : ''}. Este diário aparece para os clientes da obra.</small></div></div>
+          <div class="actions">${ehMaster() ? `<button class="btn" data-a="rdo-reabrir">${icone('editar')}Reabrir para editar</button>` : ''}<button class="btn" data-a="rdo-imprimir-diario">${icone('imprimir')}Imprimir ou salvar PDF</button></div></div></div>`
+        : `<div class="card r-apv rev"><div class="bd"><div class="r-apv-l">${icone('relogio')}<div><b>Enviado para aprovação${d.elaborador && d.elaborador.em ? ' em ' + R.dataHora(d.elaborador.em) : ''}</b><small>Aguardando a aprovação do responsável técnico. Enquanto isso, o diário fica travado para edição.</small></div></div>
+          <div class="actions"><button class="btn" data-a="rdo-puxar">${icone('editar')}Puxar de volta para editar</button><button class="btn" data-a="rdo-imprimir-diario">${icone('imprimir')}Imprimir ou salvar PDF</button></div></div></div>`;
+      el.innerHTML = `<div class="r-ed">${topo}${syncHTML()}${card}
+        <div class="r-papel" data-papel>${R.diarioHTML({ obra: o, diario: d, diarios: diariosDe(o.id), aprovacoes: [], empresa: cfgRdo().empresa, logoSouza: logoSouza(), fotoSrc: (f) => B.fotos.src(f) })}</div></div>`;
       pintarSync();
       R.ajustarZoom($('[data-papel]', el));
       return;
@@ -400,7 +461,12 @@
     const CC = { praticavel: 'Praticável', parcial: 'Parcial', impraticavel: 'Impraticável' };
     const total = R.totalMao(o, d);
     const choveuSemOc = R.choveu(d) && !d.ocorrencias.some((x) => x.tipo === 'clima');
-    el.innerHTML = `<div class="r-ed">${topo}${syncHTML()}
+    const outro = d.criadoPor && d.criadoPor.uid && d.criadoPor.uid !== (B.eu() || {}).uid ? d.criadoPor.nome : '';
+    const aviso = d.status === 'revisao'
+      ? `<div class="r-aviso r-rev">${icone('relogio')}<span><b>Enviado por ${esc((d.elaborador && d.elaborador.nome) || 'engenharia')}${d.elaborador && d.elaborador.em ? ' em ' + R.dataHora(d.elaborador.em) : ''}.</b> Confira, ajuste se precisar e aprove. Se faltar algo, devolva para ajuste.</span><button class="btn sm" data-a="rdo-devolver">${icone('esq')}Devolver para ajuste</button></div>`
+      : d.devolucao && ehEng() ? `<div class="r-aviso r-dev">${icone('info')}<span><b>Devolvido para ajuste${d.devolucao.nome ? ' por ' + esc(d.devolucao.nome) : ''} em ${R.dataHora(d.devolucao.em)}.</b> ${esc(d.devolucao.obs || '')}</span></div>`
+      : outro && ehMaster() ? `<p class="small muted r-outro">Rascunho de ${esc(outro)}. Se vocês editarem ao mesmo tempo, vale a última gravação.</p>` : '';
+    el.innerHTML = `<div class="r-ed">${topo}${syncHTML()}${aviso}
       <section class="card"><div class="hd"><h3>Dia</h3></div><div class="bd grid2">
         <label class="f"><span>Data</span><input class="inp" type="date" data-d="data" value="${esc(d.data)}"></label>
         <label class="f"><span>Número do relatório</span><input class="inp" inputmode="numeric" data-d="numero" value="${esc(d.numero)}"></label></div></section>
@@ -455,7 +521,8 @@
 
       <section class="card"><div class="hd"><h3>Observações</h3></div><div class="bd"><textarea class="inp" rows="3" data-d="obs" placeholder="Visitas, orientações, pendências do dia">${esc(d.obs || '')}</textarea></div></section>
 
-      <div class="r-aprovar"><button class="btn primary grande" data-a="rdo-aprovar">${icone('aprovar')}Aprovar diário</button><p class="small muted">Depois de aprovado, o diário sai com a sua assinatura e aparece no portal do cliente.</p></div>
+      ${ehMaster() ? `<div class="r-aprovar"><button class="btn primary grande" data-a="rdo-aprovar">${icone('aprovar')}Aprovar diário</button><p class="small muted">Depois de aprovado, o diário sai com a sua assinatura e aparece para os clientes da obra.</p></div>`
+        : `<div class="r-aprovar"><button class="btn primary grande" data-a="rdo-enviar">${icone('enviar')}Enviar para aprovação</button><p class="small muted">O diário vai para a aprovação do responsável técnico com a sua assinatura em "Elaborado por". Enquanto ele não aprovar, você pode puxar de volta.</p></div>`}
     </div>`;
     pintarSync();
   }
@@ -605,7 +672,7 @@
   }
   A['rdo-foto-trocar'] = (b) => {
     const ctx = contexto(); if (!ctx) return;
-    if (ctx.d.status === 'aprovado') { ui.toast('Reabra o diário para trocar a foto.'); return; }
+    if (!editavel(ctx.d)) { ui.toast(ehMaster() ? 'Reabra o diário para trocar a foto.' : 'Este diário não está em rascunho. Puxe de volta (ou peça para reabrir) para trocar a foto.'); return; }
     const id = b.dataset.id;
     escolherFoto((arq) => trocarFoto(id, arq));
   };
@@ -631,6 +698,7 @@
 
   /* aprovar, reabrir, excluir */
   A['rdo-aprovar'] = async () => {
+    if (!ehMaster()) return;
     const ctx = contexto(); if (!ctx) return;
     const { o, d } = ctx;
     const cfg = cfgRdo();
@@ -638,35 +706,92 @@
     if (!d.atividades.length) faltas.push('nenhuma atividade registrada');
     if (!R.PERIODOS.some(([k]) => d.clima[k] && d.clima[k].tempo)) faltas.push('clima não informado');
     if (!cfg.assinatura) faltas.push('sem imagem da sua assinatura (envie em Configurações)');
-    const ok = await ui.confirmar({ titulo: `Aprovar o RDO nº ${d.numero}?`, msg: `${faltas.length ? 'Atenção: ' + faltas.join(', ') + '.\n\n' : ''}O diário sai aprovado com data e hora e passa a aparecer no portal do cliente.`, ok: 'Aprovar' });
+    const ok = await ui.confirmar({ titulo: `Aprovar o RDO nº ${d.numero}?`, msg: `${faltas.length ? 'Atenção: ' + faltas.join(', ') + '.\n\n' : ''}O diário sai aprovado com a sua assinatura, data e hora, e passa a aparecer para os clientes da obra.`, ok: 'Aprovar' });
     if (!ok) return;
     d.status = 'aprovado';
     d.aprovadoEm = new Date().toISOString();
+    delete d.devolucao;
     d.aprovador = Object.assign({}, cfg.responsavel, o.assinantes.responsavel && o.assinantes.responsavel.nome ? o.assinantes.responsavel : {}, { assinatura: cfg.assinatura });
     est.sujo = true; salvarAgora();
     ui.toast('Diário aprovado.');
     repintar();
   };
   A['rdo-reabrir'] = async () => {
+    if (!ehMaster()) return;
     const ctx = contexto(); if (!ctx) return;
-    const { o, d } = ctx;
-    const aps = aprovacoesDe(o.id).filter((a) => a.diarioId === d.id);
-    const ok = await ui.confirmar({ titulo: 'Reabrir para editar?', msg: `O diário volta a rascunho e sai do portal do cliente até você aprovar de novo.${aps.length ? '\nAs aprovações do fiscal e do contratante deste diário serão desfeitas.' : ''}`, ok: 'Reabrir' });
+    const { d } = ctx;
+    const ok = await ui.confirmar({ titulo: 'Reabrir para editar?', msg: 'O diário volta a rascunho e some para os clientes da obra até você aprovar de novo.', ok: 'Reabrir' });
     if (!ok) return;
     d.status = 'rascunho'; delete d.aprovadoEm;
     est.sujo = true; salvarAgora();
     B.store.lista('aprovacoes').filter((r) => r.dados && r.dados.diarioId === d.id).forEach((r) => B.store.excluir('aprovacoes', r.id));
     repintar();
   };
+  /** Engenharia: manda o diário para a aprovação do responsável técnico, com a assinatura de quem elaborou. */
+  A['rdo-enviar'] = async () => {
+    if (!ehEng()) return;
+    const ctx = contexto(); if (!ctx) return;
+    const { d } = ctx;
+    const eu = euMesmo();
+    const faltas = [];
+    if (!d.atividades.length) faltas.push('nenhuma atividade registrada');
+    if (!R.PERIODOS.some(([k]) => d.clima[k] && d.clima[k].tempo)) faltas.push('clima não informado');
+    if (!eu.assinatura) faltas.push('você ainda não enviou a imagem da sua assinatura (Minha conta)');
+    const ok = await ui.confirmar({ titulo: `Enviar o RDO nº ${d.numero} para aprovação?`, msg: `${faltas.length ? 'Atenção: ' + faltas.join(', ') + '.\n\n' : ''}O diário vai para o responsável técnico e fica travado para edição até ele aprovar ou devolver. Enquanto ele não aprovar, você pode puxar de volta.`, ok: 'Enviar' });
+    if (!ok) return;
+    d.status = 'revisao';
+    d.elaborador = { uid: eu.uid, nome: eu.nome, cargo: eu.cargo, registro: eu.registro, assinatura: eu.assinatura, em: new Date().toISOString() };
+    delete d.devolucao;
+    est.sujo = true; salvarAgora();
+    ui.toast('Diário enviado para aprovação.');
+    repintar();
+  };
+  A['rdo-puxar'] = async () => {
+    if (!ehEng()) return;
+    const ctx = contexto(); if (!ctx) return;
+    const { d } = ctx;
+    if (d.status !== 'revisao') return;
+    const ok = await ui.confirmar({ titulo: 'Puxar de volta para editar?', msg: 'O diário sai da fila de aprovação e volta a rascunho. Depois de ajustar, envie de novo.', ok: 'Puxar de volta' });
+    if (!ok) return;
+    const atual = B.store.get('diarios', d.id);
+    if (atual && atual.dados.status === 'aprovado') { ui.toast('Este diário acabou de ser aprovado.'); repintar(); return; }
+    d.status = 'rascunho'; delete d.elaborador;
+    est.sujo = true; salvarAgora();
+    repintar();
+  };
+  /** Master: devolve o diário enviado para a engenharia ajustar, com uma observação. */
+  A['rdo-devolver'] = () => {
+    if (!ehMaster()) return;
+    const ctx = contexto(); if (!ctx) return;
+    const { d } = ctx;
+    ui.abrirModal({
+      titulo: `Devolver o RDO nº ${d.numero}?`, sub: `Volta para ${esc((d.elaborador && d.elaborador.nome) || 'quem elaborou')} como rascunho.`,
+      corpo: '<label class="f"><span>O que precisa ajustar</span><textarea class="inp" name="obs" rows="4" placeholder="Ex.: incluir as fotos da concretagem e corrigir o efetivo da tarde" autofocus></textarea></label>',
+      botoes: [{ rot: 'Cancelar' }, {
+        rot: 'Devolver', classe: 'primary', acao: (m) => {
+          const obs = $('[name=obs]', m.el).value.trim();
+          if (!obs) { $('[name=obs]', m.el).classList.add('erro'); return; }
+          salvarAgora();
+          d.status = 'rascunho';
+          d.devolucao = { em: new Date().toISOString(), obs, nome: euMesmo().nome };
+          delete d.elaborador;
+          est.sujo = true; salvarAgora();
+          m.fechar();
+          ui.toast('Diário devolvido para ajuste.');
+          repintar();
+        },
+      }],
+    });
+  };
   A['rdo-diario-mais'] = () => {
     const ctx = contexto(); if (!ctx) return;
     const { o, d } = ctx;
     ui.abrirModal({
       titulo: `RDO nº ${d.numero}`, folha: true,
-      corpo: `<div class="r-menu"><button class="btn" data-q="pdf">${icone('imprimir')}Imprimir ou salvar PDF</button>${d.drivePasta ? `<a class="btn" href="${esc(d.drivePasta)}" target="_blank" rel="noopener">${icone('galeria')}Fotos em alta qualidade</a>` : ''}<button class="btn danger" data-q="x">${icone('lixo')}Excluir este diário</button></div>`,
+      corpo: `<div class="r-menu"><button class="btn" data-q="pdf">${icone('imprimir')}Imprimir ou salvar PDF</button>${d.drivePasta ? `<a class="btn" href="${esc(d.drivePasta)}" target="_blank" rel="noopener">${icone('galeria')}Fotos em alta qualidade</a>` : ''}${ehMaster() || (ehEng() && editavel(d)) ? `<button class="btn danger" data-q="x">${icone('lixo')}Excluir este diário</button>` : ''}</div>`,
       aoAbrir: (el, m) => {
         $('[data-q=pdf]', el).addEventListener('click', () => { m.fechar(); A['rdo-imprimir-diario'](); });
-        $('[data-q=x]', el).addEventListener('click', async () => {
+        if ($('[data-q=x]', el)) $('[data-q=x]', el).addEventListener('click', async () => {
           m.fechar();
           const ok = await ui.confirmar({ titulo: `Excluir o RDO nº ${d.numero}?`, msg: `As ${d.fotos.length} fotos deste diário também serão apagadas (as originais vão para a lixeira do Drive).`, ok: 'Excluir', perigo: true });
           if (!ok) return;
@@ -685,7 +810,7 @@
      ========================================================= */
   function htmlServicos(o, r) {
     const p = r.prog;
-    if (!p.servicos.length) return `<div class="card"><div class="empty"><b>Nenhum serviço cadastrado</b><a href="#/rdo/${esc(o.id)}/cadastro">Cadastrar os serviços do contrato</a></div></div>`;
+    if (!p.servicos.length) return `<div class="card"><div class="empty"><b>Nenhum serviço cadastrado</b>${ehMaster() ? `<a href="#/rdo/${esc(o.id)}/cadastro">Cadastrar os serviços do contrato</a>` : 'O responsável técnico ainda não cadastrou os serviços desta obra.'}</div></div>`;
     const linha = (s) => { const x = p.por.get(s.id); return `<tr class="r-sv" data-a="rdo-hist" data-id="${esc(s.id)}"><td class="r-num">${esc(s.num || '')}</td><td>${esc(s.desc)}${x.hist.some((h) => h.fotos.length) ? ` <span class="r-fn">${icone('camera')}${x.hist.reduce((t, h) => t + h.fotos.length, 0)}</span>` : ''}</td><td class="num r-peso">${R.num(s.peso) === null ? '-' : String(s.peso).replace('.', ',')}</td><td class="r-pc"><span>${R.fmtPct(x.pct)}</span>${barra(x.pct, x.pct >= 100 ? 'ok' : x.pct > 0 ? 'and' : '')}</td></tr>`; };
     return `<p class="small muted r-pesos">${p.pesoIgual ? 'Nenhum serviço tem peso: todos pesam igual no avanço. Defina os pesos no cadastro da obra.' : `Soma dos pesos: ${String(Math.round(p.totalPeso * 100) / 100).replace('.', ',')}. O avanço de cada etapa e da obra é a média ponderada pelos pesos.${p.semPeso ? ` ${p.semPeso} ${p.semPeso === 1 ? 'serviço está' : 'serviços estão'} sem peso e não ${p.semPeso === 1 ? 'conta' : 'contam'} no total.` : ''}`}
       · Concluídos ${p.cont.concluido} · Em andamento ${p.cont.andamento} · Não iniciados ${p.cont.nao}</p>
@@ -860,9 +985,8 @@
   function htmlCadastro(o, r) {
     const usados = servicosUsados(o.id);
     const totalPeso = R.servicos(o).reduce((s, x) => s + (R.num(x.peso) || 0), 0);
-    const ac = o.acessos;
-    const codigo = (k, rot, txt) => `<div class="r-cod"><div><b>${rot}</b><small>${txt}</small></div><code>${esc(ac[k] || '-')}</code>
-      <div class="actions"><button class="btn sm" data-a="rdo-cod-msg" data-k="${k}">${icone('copiar')}Copiar mensagem</button><button class="btn sm ghost" data-a="rdo-cod-novo" data-k="${k}">${icone('repetir')}Novo código</button></div></div>`;
+    const codigosAntigos = ['cliente', 'fiscal', 'contratante'].some((k) => o.acessos && o.acessos[k]);
+    const resp = o.assinantes.responsavel || {};
     return `<div class="r-cad">
       <section class="card"><div class="hd"><h3>Dados da obra</h3></div><div class="bd grid2">
         <label class="f req span2"><span>Nome da obra</span><input class="inp" data-ob="nome" value="${esc(o.nome)}"></label>
@@ -902,19 +1026,18 @@
         <div class="actions"><button class="btn" data-a="rdo-eq-mais">${icone('mais')}Equipamento</button></div>
       </div></section>
 
-      <section class="card"><div class="hd"><div><h3>Assinaturas</h3><p>Saem no fim de cada diário. O fiscal e o contratante aprovam pelo portal, cada um com o seu código.</p></div></div><div class="bd r-assn">
-        ${R.PAPEIS.map(([k, rot]) => { const p = o.assinantes[k] || {}; return `<div><b>${rot}</b><div class="grid2">
-          <label class="f"><span>Nome</span><input class="inp" data-as="${k}" data-as-k="nome" value="${esc(p.nome || '')}"></label>
-          <label class="f"><span>Cargo</span><input class="inp" data-as="${k}" data-as-k="cargo" value="${esc(p.cargo || '')}"></label>
-          <label class="f"><span>Registro (CREA, CAU)</span><input class="inp" data-as="${k}" data-as-k="registro" value="${esc(p.registro || '')}"></label>
-          <label class="f"><span>E-mail</span><input class="inp" data-as="${k}" data-as-k="email" value="${esc(p.email || '')}"></label></div></div>`; }).join('')}
+      <section class="card"><div class="hd"><div><h3>Responsável técnico</h3><p>Sai na aprovação de cada diário, com a sua assinatura. Quem elaborou (engenharia) sai ao lado, com a assinatura dele.</p></div></div><div class="bd r-assn">
+        <div class="grid2">
+          <label class="f"><span>Nome</span><input class="inp" data-as="responsavel" data-as-k="nome" value="${esc(resp.nome || '')}"></label>
+          <label class="f"><span>Cargo</span><input class="inp" data-as="responsavel" data-as-k="cargo" value="${esc(resp.cargo || '')}"></label>
+          <label class="f"><span>Registro (CREA, CAU)</span><input class="inp" data-as="responsavel" data-as-k="registro" value="${esc(resp.registro || '')}"></label>
+          <label class="f"><span>E-mail</span><input class="inp" data-as="responsavel" data-as-k="email" value="${esc(resp.email || '')}"></label></div>
       </div></section>
 
-      <section class="card"><div class="hd"><div><h3>Acesso do cliente</h3><p>Portal: <a href="${esc(urlPortal())}" target="_blank" rel="noopener">${esc(urlPortal().replace(/^https?:\/\//, ''))}</a>. Só aparecem os diários aprovados.</p></div></div><div class="bd r-cods">
-        ${codigo('cliente', 'Código da obra', 'Consulta os diários, as fotos e o avanço')}
-        ${codigo('fiscal', 'Código do fiscal', `Consulta e aprova como fiscal${o.assinantes.fiscal.nome ? ' (' + esc(o.assinantes.fiscal.nome) + ')' : ''}`)}
-        ${codigo('contratante', 'Código do contratante', `Consulta e aprova como contratante${o.assinantes.contratante.nome ? ' (' + esc(o.assinantes.contratante.nome) + ')' : ''}`)}
-      </div></section>
+      <section class="card"><div class="hd"><div><h3>Quem acessa esta obra</h3><p>Cada pessoa entra em <a href="${esc(urlEntrada())}" target="_blank" rel="noopener">${esc(urlEntrada().replace(/^https?:\/\//, ''))}</a> com usuário e senha.</p></div>
+        <div class="actions"><a class="btn sm" href="#/rdo/acessos">${icone('chave')}Gerenciar acessos</a></div></div><div class="bd" data-q="acessos-obra"><p class="small muted">Carregando…</p></div>
+        ${codigosAntigos ? `<div class="bd r-cod-ant"><div><b>Códigos antigos do portal</b><small>Esta obra ainda abre em /clientesobras com o código da obra (só consulta). Desligue quando os clientes já tiverem usuário e senha.</small></div><button class="btn sm" data-a="rdo-cod-desligar">Desligar códigos antigos</button></div>` : ''}
+      </section>
 
       <section class="card"><div class="hd"><h3>Fotos no Drive</h3></div><div class="bd"><p class="small muted">${o.drivePasta ? `As originais em alta qualidade ficam na <a href="${esc(o.drivePasta)}" target="_blank" rel="noopener">pasta desta obra no Drive</a>, uma subpasta por diário.` : 'A pasta da obra no Drive é criada quando a primeira foto subir pela ponte.'}</p>
         <div class="actions"><button class="btn danger" data-a="rdo-obra-x">${icone('lixo')}Excluir obra</button></div></div></section>
@@ -1027,17 +1150,9 @@
   A['rdo-fn-x'] = (b) => mudarObra((o) => { const g = o.grupos.find((x) => x.id === b.dataset.g); if (g) g.funcoes = g.funcoes.filter((f) => f.id !== b.dataset.id); });
   A['rdo-eq-mais'] = () => { let novo; mudarObra((o) => { novo = rid(); o.equipamentos.push({ id: novo, nome: '' }); }); setTimeout(() => { const i = $(`[data-eq="${novo}"] input`); if (i) i.focus(); }, 50); };
   A['rdo-eq-x'] = (b) => mudarObra((o) => { o.equipamentos = o.equipamentos.filter((e) => e.id !== b.dataset.id); });
-  A['rdo-cod-novo'] = async (b) => {
-    const ok = await ui.confirmar({ titulo: 'Gerar um código novo?', msg: 'O código atual para de funcionar na hora. Quem usava o código antigo vai precisar do novo.', ok: 'Gerar novo código' });
-    if (ok) mudarObra((o) => { o.acessos[b.dataset.k] = gerarCodigo(); });
-  };
-  A['rdo-cod-msg'] = async (b) => {
-    const o = obraAberta(); if (!o) return;
-    const k = b.dataset.k, cod = o.acessos[k];
-    const quem = k === 'fiscal' ? ' Com este código você também aprova os diários como fiscal da obra.' : k === 'contratante' ? ' Com este código você também aprova os diários como contratante.' : '';
-    const txt = `Olá! Os diários da obra ${o.nome} estão disponíveis em ${urlPortal()}\nCódigo de acesso: ${cod}${quem ? '\n' + quem.trim() : ''}`;
-    try { await navigator.clipboard.writeText(txt); ui.toast('Mensagem copiada. É só colar no WhatsApp ou no e-mail.'); }
-    catch { ui.alerta({ titulo: 'Mensagem para o cliente', msg: txt }); }
+  A['rdo-cod-desligar'] = async () => {
+    const ok = await ui.confirmar({ titulo: 'Desligar os códigos antigos?', msg: 'Quem entrava no portal antigo com o código desta obra deixa de entrar. Os clientes passam a usar o usuário e a senha criados em Acessos.', ok: 'Desligar' });
+    if (ok) mudarObra((o) => { o.acessos = {}; });
   };
   A['rdo-obra-x'] = async () => {
     const o = obraAberta(); if (!o) return;
@@ -1192,14 +1307,14 @@
     const ft = img.closest('.r-ft[data-id]'), gr = img.closest('.r-ft-g');
     const id = ft ? ft.dataset.id : img.dataset.foto;
     const ctx = contexto();
-    const aprovado = !!(ctx && ctx.d.status === 'aprovado');
+    const aprovado = !!(ctx && !editavel(ctx.d));
     const pode = !!(ctx && !aprovado && id && (ft || gr) && ctx.d.fotos.some((x) => x.id === id));
     const ph = document.createElement('div');
     ph.className = 'r-semfoto' + (ft ? ' mini' : '');
     ph.title = 'A foto ainda não subiu do aparelho onde foi tirada ou importada.';
     ph.innerHTML = ft
       ? `<b>Foto não enviada</b>${pode ? `<span class="r-semfoto-bt" data-a="rdo-foto-trocar" data-id="${esc(id)}">Escolher de novo</span>` : ''}`
-      : `<b>Foto ainda não enviada</b><span>${pode ? 'Escolha a mesma foto (ou outra) para ela ir de novo' : aprovado ? 'Para enviar de novo, reabra o diário' : 'Está no aparelho onde foi tirada'}</span>${pode ? `<button type="button" class="btn sm" data-a="rdo-foto-trocar" data-id="${esc(id)}">Escolher a foto de novo</button>` : ''}`;
+      : `<b>Foto ainda não enviada</b><span>${pode ? 'Escolha a mesma foto (ou outra) para ela ir de novo' : aprovado ? (ehMaster() ? 'Para enviar de novo, reabra o diário' : 'Está no aparelho onde foi tirada') : 'Está no aparelho onde foi tirada'}</span>${pode ? `<button type="button" class="btn sm" data-a="rdo-foto-trocar" data-id="${esc(id)}">Escolher a foto de novo</button>` : ''}`;
     img.replaceWith(ph);
   }, true);
 
@@ -1297,8 +1412,8 @@
         passo('Cadastrando a obra…', 0);
         o = normalizarObra(Object.assign({}, copia(pac.obra), {
           responsavel: pac.obra.responsavel || cf.responsavel.nome,
-          assinantes: Object.assign({ fiscal: {}, contratante: {} }, pac.obra.assinantes || {}, { responsavel: Object.assign({}, cf.responsavel) }),
-          acessos: { cliente: gerarCodigo(), fiscal: gerarCodigo(), contratante: gerarCodigo() },
+          assinantes: { responsavel: Object.assign({}, cf.responsavel) },
+          acessos: {},
           criadoEm: new Date().toISOString(),
         }));
         if (o.clienteId && !Sis.clientes.get(o.clienteId)) { const c = pac.clienteNome && Sis.clientes.porNome(pac.clienteNome); o.clienteId = c ? c.id : ''; }
@@ -1395,13 +1510,202 @@
     Sis.desenhar();
   };
 
+
+  /* =========================================================
+     Acessos (só o master): engenharia e clientes, por obra
+     ========================================================= */
+  const ACS = { lista: null, erro: '', carregando: false };
+  const PERFIS = [
+    ['engenharia', 'Engenharia', 'Cria e preenche os diários e envia para a sua aprovação, com a assinatura dele. Não aprova, não reabre e não mexe no cadastro da obra.'],
+    ['cliente', 'Cliente', 'Só vê os diários aprovados, as fotos e o avanço das obras liberadas. Não assina nem cria nada.'],
+  ];
+  const nomePerfil = (k) => (PERFIS.find((x) => x[0] === k) || [k, k])[1];
+  async function carregarAcessos() {
+    ACS.carregando = true; ACS.erro = '';
+    try { ACS.lista = (await B.rpc('rdo_acessos_lista')) || []; }
+    catch (e) { ACS.erro = /Could not find|does not exist|schema cache/i.test(e.message || '') ? 'Falta rodar a versão nova do rdo_estrutura.sql no SQL Editor do projeto do Diário.' : (navigator.onLine ? e.message : 'Sem internet. Para ver e mudar os acessos é preciso estar conectado.'); }
+    ACS.carregando = false;
+    if (Sis.rota().mod === 'rdo' && Sis.rota().partes[0] === 'acessos') Sis.desenhar(true);
+  }
+  function telaAcessos(el) {
+    if (!ehMaster()) { el.innerHTML = '<div class="card"><div class="empty"><b>Só o acesso master gerencia os acessos.</b><a href="#/rdo">Voltar</a></div></div>'; return; }
+    if (ACS.lista === null && !ACS.carregando && !ACS.erro) carregarAcessos();
+    const lista = ACS.lista || [];
+    const nomeObra = (id) => { const o = obra(id); return o ? o.nome : 'Obra excluída'; };
+    const situacao = (a) => (!a.ativo ? ['Desativado', 'neutro'] : !a.ativado ? ['Login não criado', 'atencao'] : a.ultimo_acesso ? [`Último acesso ${R.dataHora(a.ultimo_acesso)}`, 'ok'] : ['Ainda não entrou', 'neutro']);
+    const cartao = (a) => `<div class="card r-ac ${a.ativo ? '' : 'off'}"><div class="r-ac-l"><span class="r-ac-av">${esc((a.nome || '?').trim().split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase())}</span>
+        <div class="r-ac-t"><b>${esc(a.nome)}</b><small>${esc([a.funcao, a.registro].filter(Boolean).join(' · ') || nomePerfil(a.perfil))}</small>
+          <small>Usuário <code>${esc(a.usuario)}</code></small></div>
+        <span class="chip ${situacao(a)[1]}">${esc(situacao(a)[0])}</span></div>
+      <div class="r-ac-o">${(a.obras || []).length ? a.obras.map((id) => `<span class="chip neutro">${esc(nomeObra(id))}</span>`).join('') : '<span class="small muted">Nenhuma obra liberada</span>'}</div>
+      <div class="actions"><button class="btn sm" data-a="rdo-ac-editar" data-id="${esc(a.id)}">${icone('editar')}Editar</button><button class="btn sm" data-a="rdo-ac-codigo" data-id="${esc(a.id)}">${icone('chave')}${a.ativado ? 'Novo código' : 'Criar login'}</button>
+        <button class="btn sm ghost" data-a="rdo-ac-ativo" data-id="${esc(a.id)}">${a.ativo ? 'Desativar' : 'Reativar'}</button></div></div>`;
+    const grupo = (k, tit, txt) => { const l = lista.filter((a) => a.perfil === k); return `<section class="r-ac-g"><div class="r-ac-gh"><h3>${tit} <span class="r-cont">${l.length}</span></h3><p class="small muted">${txt}</p></div>
+      ${l.length ? `<div class="r-acs">${l.map(cartao).join('')}</div>` : `<div class="card"><div class="empty">${k === 'engenharia' ? 'Ninguém da engenharia ainda.' : 'Nenhum cliente ainda.'}</div></div>`}</section>`; };
+    el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/rdo" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>Acessos ao Diário de obra</b><span>Cada pessoa entra em ${esc(urlEntrada().replace(/^https?:\/\//, ''))} com usuário e senha</span></div>
+        <div class="actions"><button class="btn primary" data-a="rdo-ac-novo">${icone('mais')}<span>Novo acesso</span></button></div></div>
+      <div class="r-ac-m card"><div class="bd"><div><b>Master</b><small>Você. Pode tudo: cadastra as obras, aprova e reabre os diários e gerencia os acessos.</small></div><span class="chip ok">${esc(cfgRdo().responsavel.nome || B.conta())}</span></div></div>
+      ${ACS.erro ? `<div class="r-aviso erro"><b>Não foi possível carregar os acessos</b><span>${esc(ACS.erro)}</span><button class="btn sm" data-a="rdo-ac-recarregar">Tentar de novo</button></div>` : ''}
+      ${ACS.lista === null && !ACS.erro ? '<div class="empty">Carregando os acessos…</div>' : `${grupo('engenharia', 'Engenharia', PERFIS[0][2])}${grupo('cliente', 'Clientes', PERFIS[1][2])}`}`;
+  }
+  A['rdo-ac-recarregar'] = () => { ACS.lista = null; ACS.erro = ''; Sis.desenhar(true); };
+  /** "Matheus Villa Nova" -> "matheus.villanova" */
+  const sugerirUsuario = (nome) => {
+    const p = norm(nome).replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+    return (p.length > 1 ? p[0] + '.' + p[p.length - 1] : p[0] || '').slice(0, 30);
+  };
+  function modalAcesso(a) {
+    const novo = !a;
+    a = a || { nome: '', funcao: '', registro: '', usuario: '', perfil: 'engenharia', obras: [], ativo: true };
+    const todas = obras();
+    let usuarioMexido = !novo;
+    ui.abrirModal({
+      titulo: novo ? 'Novo acesso' : `Editar o acesso de ${a.nome}`,
+      sub: novo ? 'Depois de salvar, o sistema mostra o código de acesso para você mandar para a pessoa.' : `Usuário ${esc(a.usuario)}`,
+      corpo: `<div class="grid2">
+        <label class="f req span2"><span>Nome</span><input class="inp" name="nome" value="${esc(a.nome)}" placeholder="Ex.: Matheus Villa Nova" ${novo ? 'autofocus' : ''}></label>
+        <label class="f"><span>Função</span><input class="inp" name="funcao" value="${esc(a.funcao)}" placeholder="Ex.: Assistente de engenharia, Síndico"></label>
+        <label class="f" data-q="reg"><span>Registro profissional (opcional)</span><input class="inp" name="registro" value="${esc(a.registro)}" placeholder="Ex.: CREA-BA 000000000-0"></label>
+        ${novo ? `<label class="f req span2"><span>Usuário (para entrar)</span><input class="inp" name="usuario" value="" autocapitalize="off" spellcheck="false" placeholder="Ex.: matheus.villanova"><small class="muted">Letras minúsculas, números e ponto, sem espaço. Não dá para mudar depois.</small></label>` : ''}
+      </div>
+      <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)">Tipo de acesso</span><div class="r-perfis">${PERFIS.map(([k, n, t]) => `<label class="r-perfil"><input type="radio" name="perfil" value="${k}" ${a.perfil === k ? 'checked' : ''}><span><b>${n}</b><small>${t}</small></span></label>`).join('')}</div></div>
+      <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)">Obras liberadas</span>${todas.length ? `<div class="r-ac-obras">${todas.map((o) => `<label class="chk"><input type="checkbox" name="obra" value="${esc(o.id)}" ${(a.obras || []).includes(o.id) ? 'checked' : ''}> <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.situacao === 'concluida' ? ' <small class="muted">(concluída)</small>' : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra cadastrada ainda.</p>'}</div>`,
+      aoAbrir: (m) => {
+        const nome = $('[name=nome]', m), us = $('[name=usuario]', m), reg = $('[data-q=reg]', m);
+        const verPerfil = () => { const p = ($('[name=perfil]:checked', m) || {}).value; reg.hidden = p !== 'engenharia'; };
+        $$('[name=perfil]', m).forEach((r) => r.addEventListener('change', verPerfil)); verPerfil();
+        if (us) {
+          nome.addEventListener('input', () => { if (!usuarioMexido) us.value = sugerirUsuario(nome.value); });
+          us.addEventListener('input', () => { usuarioMexido = true; us.value = us.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''); });
+        }
+      },
+      botoes: [
+        ...(novo ? [] : [{ rot: 'Excluir acesso', classe: 'danger', esq: true, acao: async (m) => {
+          const ok = await ui.confirmar({ titulo: `Excluir o acesso de ${a.nome}?`, msg: 'A pessoa deixa de entrar na hora. Os diários que ela fez continuam na obra. Para só bloquear por um tempo, use Desativar.', ok: 'Excluir', perigo: true });
+          if (!ok) return;
+          try { await B.rpc('rdo_acesso_excluir', { p_id: a.id }); m.fechar(); ui.toast('Acesso excluído.'); ACS.lista = null; Sis.desenhar(true); }
+          catch (e) { ui.toast(e.message, 'erro'); }
+        } }]),
+        { rot: 'Cancelar' },
+        { rot: novo ? 'Criar acesso' : 'Salvar', classe: 'primary', acao: async (m) => {
+          const v = (n) => ($(`[name=${n}]`, m.el) ? $(`[name=${n}]`, m.el).value.trim() : '');
+          const perfil = ($('[name=perfil]:checked', m.el) || {}).value;
+          const dados = { id: a.id || null, nome: v('nome'), funcao: v('funcao'), registro: perfil === 'engenharia' ? v('registro') : '', perfil, obras: $$('[name=obra]:checked', m.el).map((x) => x.value), ativo: a.ativo };
+          if (novo) dados.usuario = v('usuario');
+          if (!dados.nome) { $('[name=nome]', m.el).classList.add('erro'); return; }
+          if (novo && !dados.usuario) { $('[name=usuario]', m.el).classList.add('erro'); return; }
+          if (!navigator.onLine) { ui.toast('Sem internet. Para criar ou mudar acessos é preciso estar conectado.'); return; }
+          const bt = m.el.querySelector('.mf .primary'); if (bt) bt.disabled = true;
+          let salvo;
+          try { salvo = await B.rpc('rdo_acesso_salvar', { p: dados }); }
+          catch (e) { if (bt) bt.disabled = false; ui.toast(e.message, 'erro'); return; }
+          if (!novo) { m.fechar(); ui.toast('Acesso salvo.'); ACS.lista = null; Sis.desenhar(true); return; }
+          const cod = gerarCodigo();
+          try { await B.criarLogin(salvo.email, cod); }
+          catch (e) {
+            try { await B.rpc('rdo_acesso_excluir', { p_id: salvo.id }); } catch { /* fica sem login; dá para criar depois */ }
+            if (bt) bt.disabled = false;
+            ui.alerta({ titulo: 'O login não foi criado', msg: e.message });
+            return;
+          }
+          m.fechar();
+          ACS.lista = null; Sis.desenhar(true);
+          mostrarCodigo(Object.assign({}, salvo, { ativado: true }), cod, true);
+        } },
+      ],
+    });
+  }
+  /** Mostra o código de acesso uma única vez, com a mensagem pronta para o WhatsApp. */
+  function mostrarCodigo(a, cod, novo) {
+    const txt = `Olá, ${String(a.nome).split(/\s+/)[0]}! ${novo ? 'Seu acesso' : 'Seu novo código de acesso'} ao Diário de obra da Souza Engenharia:\n${urlEntrada()}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\n${a.perfil === 'engenharia' ? 'No primeiro acesso, troque o código por uma senha sua em "Minha conta" e envie a imagem da sua assinatura.' : 'Depois de entrar, você pode trocar o código por uma senha sua.'}`;
+    ui.abrirModal({
+      titulo: novo ? 'Acesso criado' : 'Novo código gerado', sub: `Mande para ${esc(a.nome)}. ${novo ? '' : 'O código anterior já não funciona. '}Este código não aparece de novo: se perder, gere outro.`,
+      corpo: `<div class="r-codbox"><div><span>Endereço</span><b>${esc(urlEntrada().replace(/^https?:\/\//, ''))}</b></div><div><span>Usuário</span><b>${esc(a.usuario)}</b></div><div><span>Código de acesso</span><b class="r-cod-v" data-q="cod">${esc(cod)}</b></div></div>`,
+      botoes: [{ rot: 'Fechar' }, { rot: 'Copiar mensagem', classe: 'primary', acao: async () => {
+        try { await navigator.clipboard.writeText(txt); ui.toast('Mensagem copiada. É só colar no WhatsApp.'); }
+        catch { ui.alerta({ titulo: 'Mensagem', msg: txt }); }
+      } }],
+    });
+  }
+  const acessoPor = (id) => (ACS.lista || []).find((x) => x.id === id);
+  A['rdo-ac-novo'] = () => { if (!obras().length) { ui.toast('Cadastre uma obra antes de criar acessos.'); return; } modalAcesso(null); };
+  A['rdo-ac-editar'] = (b) => { const a = acessoPor(b.dataset.id); if (a) modalAcesso(a); };
+  A['rdo-ac-ativo'] = async (b) => {
+    const a = acessoPor(b.dataset.id); if (!a) return;
+    if (a.ativo && !(await ui.confirmar({ titulo: `Desativar o acesso de ${a.nome}?`, msg: 'A pessoa deixa de ver as obras na hora, em todos os aparelhos. Dá para reativar depois.', ok: 'Desativar', perigo: true }))) return;
+    try { await B.rpc('rdo_acesso_salvar', { p: Object.assign({}, a, { ativo: !a.ativo }) }); ui.toast(a.ativo ? 'Acesso desativado.' : 'Acesso reativado.'); ACS.lista = null; Sis.desenhar(true); }
+    catch (e) { ui.toast(e.message, 'erro'); }
+  };
+  A['rdo-ac-codigo'] = async (b) => {
+    const a = acessoPor(b.dataset.id); if (!a) return;
+    if (a.ativado && !(await ui.confirmar({ titulo: `Gerar um código novo para ${a.nome}?`, msg: 'O código ou a senha atual deixa de funcionar na hora. Use quando a pessoa esquecer a senha.', ok: 'Gerar código' }))) return;
+    const cod = gerarCodigo();
+    try {
+      if (a.ativado) await B.rpc('rdo_acesso_senha', { p_id: a.id, p_senha: cod });
+      else await B.criarLogin(a.email, cod);
+    } catch (e) { ui.alerta({ titulo: 'Não foi possível gerar o código', msg: e.message }); return; }
+    ACS.lista = null; Sis.desenhar(true);
+    mostrarCodigo(a, cod, !a.ativado);
+  };
+
+  /* =========================================================
+     Minha conta (engenharia): assinatura, senha e o aparelho
+     ========================================================= */
+  function telaConta(el) {
+    const eu = B.eu() || {};
+    el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/rdo" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>Minha conta</b><span>${esc(eu.nome || B.conta())}</span></div></div>
+      ${syncHTML()}
+      <div class="cfg">
+        <div class="card"><div class="hd"><div><h3>Seus dados</h3><p>Saem em "Elaborado por" nos diários que você envia. Para mudar, fale com a Souza Engenharia.</p></div></div><div class="bd">
+          <dl class="kv"><dt>Nome</dt><dd>${esc(eu.nome || '-')}</dd><dt>Função</dt><dd>${esc(eu.funcao || '-')}</dd>${eu.registro ? `<dt>Registro</dt><dd>${esc(eu.registro)}</dd>` : ''}<dt>Usuário</dt><dd>${esc(eu.usuario || '-')}</dd>
+            <dt>Obras</dt><dd>${obras().map((o) => esc(o.nome)).join(', ') || 'Nenhuma liberada'}</dd></dl></div></div>
+        ${ehEng() ? `<div class="card"><div class="hd"><div><h3>Sua assinatura</h3><p>Imagem que sai no diário quando você envia para aprovação. Assine num papel branco, tire uma foto bem de perto e envie.</p></div></div><div class="bd">
+          <div class="r-logo r-assimg">${eu.assinatura ? `<img src="${esc(eu.assinatura)}" alt="Assinatura">` : '<span class="muted small">Sem assinatura</span>'}<label class="btn sm">${icone('enviar')}${eu.assinatura ? 'Trocar' : 'Enviar'} imagem<input type="file" accept="image/*" data-minha-ass hidden></label></div></div></div>` : ''}
+        <div class="card"><div class="hd"><div><h3>Trocar a senha</h3><p>Troque o código que você recebeu por uma senha sua, com pelo menos 8 caracteres.</p></div></div>
+          <form class="bd" id="rdo-senha" onsubmit="return false"><div class="grid2">
+            <label class="f"><span>Senha nova</span><input class="inp" type="password" name="s1" autocomplete="new-password"></label>
+            <label class="f"><span>Repita a senha nova</span><input class="inp" type="password" name="s2" autocomplete="new-password"></label></div>
+            <div class="actions"><button class="btn primary" type="submit">Trocar a senha</button></div></form></div>
+        ${ehEng() ? `<div class="card"><div class="hd"><div><h3>Fotos deste aparelho</h3><p>Cada foto sobe do aparelho onde foi tirada. Deixe o sistema aberto com internet até terminar.</p></div></div><div class="bd" id="rdo-fotos-st">${htmlFotosSt()}</div></div>` : ''}
+        <div class="card"><div class="hd"><div><h3>Este aparelho</h3></div></div><div class="bd">
+          <div class="actions"><button class="btn" data-a="rdo-sync">${icone('nuvem')}Sincronizar agora</button><button class="btn" data-a="rdo-sair">${icone('sair')}Sair deste aparelho</button></div></div></div>
+      </div>`;
+    pintarSync();
+    $('#rdo-senha', el).addEventListener('submit', async (ev) => {
+      const f = ev.target, s1 = $('[name=s1]', f).value, s2 = $('[name=s2]', f).value;
+      if (s1 !== s2) { ui.toast('As duas senhas não são iguais.'); return; }
+      const b = $('button[type=submit]', f); b.disabled = true;
+      try { await B.trocarSenha(s1); f.reset(); ui.toast('Senha trocada. Use a nova senha da próxima vez que entrar.'); }
+      catch (e) { ui.toast(e.message, 'erro'); }
+      b.disabled = false;
+    });
+  }
+  document.addEventListener('change', async (ev) => {
+    const t = ev.target;
+    if (!t.matches || !t.matches('[data-minha-ass]') || !t.files || !t.files[0]) return;
+    const arq = t.files[0]; t.value = '';
+    if (!navigator.onLine) { ui.toast('Para enviar a assinatura é preciso internet.'); return; }
+    try {
+      const eu = B.eu() || {};
+      const red = await reduzir(arq, 900, 'image/png');
+      const url = await B.enviarArquivo(`equipe/${eu.uid}/assinatura-${Date.now()}.png`, red.blob, 'image/png');
+      await B.rpc('rdo_minha_assinatura', { p_url: url });
+      await B.atualizarEu();
+      ui.toast('Assinatura salva.');
+      Sis.desenhar(true);
+    } catch (e) { ui.toast('Não foi possível enviar a assinatura: ' + e.message, 'erro'); }
+  });
+
   /* =========================================================
      Registro no sistema
      ========================================================= */
   function desenharTela(el, partes) {
-    if (!B.conectado()) { telaConectar(el); return; }
+    if (!B.conectado()) { if (window.RdoApp) window.RdoApp.entrada(); else telaConectar(el); return; }
+    if (!B.perfil() || B.perfil() === 'cliente') { el.innerHTML = '<div class="card"><div class="empty"><b>Este acesso não abre o editor do Diário de obra</b>Entre pelo endereço do Diário para ver os diários aprovados.</div></div>'; return; }
     if (!partes[0]) telaLista(el);
-    else if (partes[0] === 'config') telaConfig(el);
+    else if (partes[0] === 'acessos') telaAcessos(el);
+    else if (partes[0] === 'conta') telaConta(el);
+    else if (partes[0] === 'config') { if (ehMaster()) telaConfig(el); else telaConta(el); }
     else if (partes[1] === 'd' && partes[2]) telaDiario(el, partes[0], partes[2]);
     else telaObra(el, partes[0], ABAS.some((a) => a[0] === partes[1]) ? partes[1] : 'diarios');
   }

@@ -96,7 +96,12 @@ window.RDOB = (function () {
   };
 
   /* ---------------- conexão com o projeto do RDO ---------------- */
-  const S = { sb: null, sessao: null, expirada: false, online: navigator.onLine, sincronizando: false, deNovo: false, ultima: null, erro: null, ausente: false, iniciado: null };
+  const S = { sb: null, sessao: null, eu: null, expirada: false, online: navigator.onLine, sincronizando: false, deNovo: false, ultima: null, erro: null, ausente: false, iniciado: null };
+  /** Login de quem entra com usuário (sem e-mail): vira um e-mail interno que nunca recebe mensagens. */
+  const emailUsuario = (u) => 'rdo.' + String(u || '').trim().toLowerCase() + '@souzaengenharia.com';
+  /** Perfil de quem está logado: master (você), engenharia ou cliente. Sem a resposta do banco ainda, é o master (sistema principal). */
+  const perfil = () => (S.eu && Object.prototype.hasOwnProperty.call(S.eu, 'perfil') ? S.eu.perfil : 'master');
+  const chaveEu = (e) => (e ? [e.perfil, e.uid, (e.obras || []).slice().sort().join(',')].join('|') : '');
   class ErroSb extends Error { constructor(m, status) { super(m); this.status = status; } }
   const semConexao = (e) => e instanceof TypeError || (e && /Failed to fetch|NetworkError|Load failed/i.test(e.message || ''));
   const url = (p) => S.sb.url.replace(/\/+$/, '') + p;
@@ -138,37 +143,111 @@ window.RDOB = (function () {
   }
   const projetoFixo = () => { const c = window.SOUZA_CONFIG || {}; return c.rdoUrl && c.rdoChave ? { url: c.rdoUrl.replace(/\/+$/, ''), chave: c.rdoChave } : null; };
 
-  async function conectar({ url: u, chave, email, senha }) {
+  /** Entra no projeto do RDO. "email" pode ser o e-mail (master) ou o usuário criado em Acessos. */
+  async function conectar({ url: u, chave, email, usuario, senha }) {
     const fixo = projetoFixo();
     const sb = fixo || { url: String(u || '').trim().replace(/\/+$/, ''), chave: String(chave || '').trim() };
     if (!/^https?:\/\//.test(sb.url) || !sb.chave) throw new Error('Informe o endereço do projeto do RDO e a chave pública.');
+    const login = String(email || usuario || '').trim();
+    if (!login || !senha) throw new Error(login ? 'Informe a senha.' : 'Informe o usuário.');
+    const porUsuario = !login.includes('@');
+    const id = porUsuario ? emailUsuario(login) : login;
     const antes = S.sb;
     S.sb = sb;
     let j;
-    try { j = await req('/auth/v1/token?grant_type=password', { method: 'POST', json: { email: String(email || '').trim(), password: senha }, auth: false }); }
-    catch (e) {
+    const tentar = (pw) => req('/auth/v1/token?grant_type=password', { method: 'POST', json: { email: id, password: pw }, auth: false });
+    try {
+      try { j = await tentar(senha); }
+      catch (e) {
+        // código de acesso digitado sem o hífen ou em minúsculas
+        const cod = String(senha).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const fmt = cod.slice(0, 4) + '-' + cod.slice(4);
+        if (/invalid login credentials/i.test(e.message) && cod.length === 8 && fmt !== senha) j = await tentar(fmt);
+        else throw e;
+      }
+    } catch (e) {
       S.sb = antes;
-      if (semConexao(e)) throw new Error('Sem conexão com a internet. A primeira conexão precisa de internet.');
-      if (/invalid login credentials/i.test(e.message)) throw new Error('E-mail ou senha incorretos neste projeto.');
+      if (semConexao(e)) throw new Error('Sem conexão com a internet. A primeira entrada precisa de internet.');
+      if (/invalid login credentials/i.test(e.message)) throw new Error(porUsuario ? 'Usuário ou senha incorretos.' : 'E-mail ou senha incorretos neste projeto.');
+      if (/email not confirmed/i.test(e.message)) throw new Error('Este acesso ainda não foi confirmado. Peça um código novo para a Souza Engenharia.');
       throw e;
     }
     const sessao = sessaoDe(j);
+    const sessaoAntes = S.sessao;
+    S.sessao = sessao; S.expirada = false;
+    let eu;
+    try { eu = await buscarEu(); }
+    catch (e) { S.sessao = sessaoAntes; S.sb = antes; throw e; }
+    if (!eu.perfil) {
+      try { await req('/auth/v1/logout', { method: 'POST' }); } catch { /* ignora */ }
+      S.sessao = sessaoAntes; S.sb = antes;
+      throw new Error(eu.motivo === 'desativado' ? 'Este acesso foi desativado. Fale com a Souza Engenharia.' : 'Este usuário não tem acesso ao Diário de obra.');
+    }
     const anterior = await kv.get('usuario');
     if (anterior && sessao.user && anterior !== sessao.user.id) await store.limpar();
-    S.sessao = sessao; S.expirada = false;
     if (!fixo) await kv.set('supabase', sb);
     await kv.set('sessao', sessao);
     if (sessao.user) await kv.set('usuario', sessao.user.id);
+    S.eu = eu; await kv.set('eu', eu);
     await store.carregar();
     avisar('remoto');
     sync.agora();
+    return eu;
   }
   async function desconectar() {
     try { if (navigator.onLine && S.sessao) await req('/auth/v1/logout', { method: 'POST' }); } catch { /* ignora */ }
-    S.sessao = null;
-    await kv.del('sessao'); await kv.del('usuario');
+    S.sessao = null; S.eu = null;
+    await kv.del('sessao'); await kv.del('usuario'); await kv.del('eu');
     await store.limpar();
     avisar('remoto');
+  }
+  /** Pergunta ao banco quem está logado. Sem a função (SQL antigo), é o master. */
+  async function buscarEu() {
+    try { return (await req('/rest/v1/rpc/rdo_eu', { method: 'POST', json: {} })) || { perfil: 'master' }; }
+    catch (e) {
+      if (e.status === 404 || /Could not find|does not exist|schema cache/i.test(e.message || '')) return { perfil: 'master', antigo: true };
+      throw e;
+    }
+  }
+  /** Atualiza o perfil. Se mudaram as obras liberadas (ou o acesso caiu), refaz os dados do aparelho. */
+  async function atualizarEu() {
+    const eu = await buscarEu();
+    const antes = S.eu;
+    S.eu = eu; await kv.set('eu', eu);
+    if (eu.perfil === 'master' || !antes) return false;
+    if (chaveEu(antes) === chaveEu(eu)) { if (JSON.stringify(antes) !== JSON.stringify(eu)) avisar('acesso'); return false; }
+    await store.limpar();
+    avisar('acesso');
+    return true;
+  }
+  /** Cria o login de um acesso novo (o banco só aceita se o acesso foi criado antes pelo master). */
+  async function criarLogin(email, senha) {
+    let j;
+    try { j = await req('/auth/v1/signup', { method: 'POST', json: { email, password: senha }, auth: false }); }
+    catch (e) {
+      const m = e.message || '';
+      if (semConexao(e)) throw new Error('Sem internet. Para criar um acesso é preciso estar conectado.');
+      if (/signups? not allowed|signup_disabled|disabled/i.test(m)) throw new Error('O cadastro de novos usuários está desligado no Supabase do Diário. Ligue "Allow new users to sign up" em Authentication > Sign In / Providers. O banco só aceita quem você criar aqui.');
+      if (/confirmation email|sending.*email/i.test(m)) throw new Error('O Supabase do Diário está pedindo confirmação por e-mail. Desligue "Confirm email" em Authentication > Sign In / Providers > Email e tente de novo.');
+      if (/already registered|already exists/i.test(m)) throw new Error('Este usuário já tem login. Use "Novo código" no acesso.');
+      if (/database error/i.test(m)) throw new Error('O Supabase recusou o cadastro. Rode de novo o arquivo rdo_estrutura.sql no SQL Editor do projeto do Diário.');
+      throw e;
+    }
+    if (j && !j.access_token && !(j.user && j.user.email_confirmed_at) && !j.email_confirmed_at && j.confirmation_sent_at) {
+      throw new Error('O Supabase do Diário está pedindo confirmação por e-mail. Desligue "Confirm email" em Authentication > Sign In / Providers > Email e use "Novo código" no acesso.');
+    }
+    return j;
+  }
+  /** Troca a senha de quem está logado. */
+  async function trocarSenha(nova) {
+    if (String(nova || '').length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.');
+    try { await req('/auth/v1/user', { method: 'PUT', json: { password: nova } }); }
+    catch (e) {
+      if (semConexao(e)) throw new Error('Sem internet. Para trocar a senha é preciso estar conectado.');
+      if (/different from the old/i.test(e.message)) throw new Error('A senha nova precisa ser diferente da atual.');
+      if (/weak|at least|characters/i.test(e.message)) throw new Error('Senha fraca. Use pelo menos 8 caracteres, misturando letras e números.');
+      throw e;
+    }
   }
 
   /* ---------------- sincronização ---------------- */
@@ -183,7 +262,9 @@ window.RDOB = (function () {
       try {
         await fila;
         await enviar();
-        const mudou = await baixar();
+        const mudouEu = await atualizarEu();
+        if (!perfil()) { S.erro = null; S.online = true; return; }
+        const mudou = (await baixar()) || mudouEu;
         S.ultima = new Date(); S.erro = null; S.online = true; S.ausente = false;
         if (mudou) avisar('remoto');
       } catch (e) {
@@ -201,6 +282,11 @@ window.RDOB = (function () {
   async function enviar() {
     for (const t of TAB) {
       const ids = [...pend.keys()].filter((k) => k.startsWith(t + '|')).map((k) => k.slice(t.length + 1));
+      // só o master grava obras e configuração; o resto nem sai do aparelho
+      if (perfil() !== 'master' && t !== 'diarios') {
+        if (ids.length) { ids.forEach((id) => pend.delete(t + '|' + id)); await op('pend', 'readwrite', (s) => { ids.forEach((id) => s.delete(t + '|' + id)); }); }
+        continue;
+      }
       for (let i = 0; i < ids.length; i += 100) {
         const lote = ids.slice(i, i + 100).map((id) => mapas[t].get(id)).filter(Boolean)
           .map((r) => ({ id: r.id, tipo: r.tipo, grupo: r.grupo, dados: r.dados, atualizado_em: r.atualizado_em, excluido: !!r.excluido }));
@@ -278,8 +364,8 @@ window.RDOB = (function () {
     ponte: { url: '', senha: '' },
   };
   function config() {
-    const r = store.get('obras', ID_CONFIG);
-    const c = (r && r.dados) || {};
+    const r = perfil() === 'master' ? store.get('obras', ID_CONFIG) : null;
+    const c = (r && r.dados) || (perfil() !== 'master' && S.eu && S.eu.config) || {};
     return {
       empresa: Object.assign({}, CONFIG_PADRAO.empresa, c.empresa || {}),
       responsavel: Object.assign({}, CONFIG_PADRAO.responsavel, c.responsavel || {}),
@@ -287,7 +373,7 @@ window.RDOB = (function () {
       ponte: Object.assign({}, CONFIG_PADRAO.ponte, c.ponte || {}),
     };
   }
-  function salvarConfig(c) { store.salvar('obras', ID_CONFIG, 'config', c); }
+  function salvarConfig(c) { if (perfil() === 'master') store.salvar('obras', ID_CONFIG, 'config', c); }
 
   /* ---------------- arquivos no Storage ---------------- */
   const urlPublica = (path) => (S.sb ? url(`/storage/v1/object/public/${BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`) : '');
@@ -473,7 +559,7 @@ window.RDOB = (function () {
       if (resp.pasta) d.drivePasta = resp.pasta;
       store.gravar('diarios', [{ id: r.id, tipo: r.tipo, grupo: r.grupo, dados: d }]);
     }
-    const o = store.get('obras', obraId);
+    const o = perfil() === 'master' ? store.get('obras', obraId) : null;
     if (o && resp.pastaObra && o.dados.drivePasta !== resp.pastaObra) store.gravar('obras', [{ id: o.id, tipo: o.tipo, grupo: o.grupo, dados: Object.assign({}, o.dados, { drivePasta: resp.pastaObra }) }]);
   }
 
@@ -483,6 +569,7 @@ window.RDOB = (function () {
     S.iniciado = (async () => {
       S.sb = projetoFixo() || (await kv.get('supabase')) || null;
       S.sessao = (await kv.get('sessao')) || null;
+      S.eu = S.sessao ? (await kv.get('eu')) || null : null;
       await store.carregar();
       await fotos.carregar();
       S.pronto = true;
@@ -493,6 +580,7 @@ window.RDOB = (function () {
 
   return {
     TAB, store, sync, estado, iniciar, conectar, desconectar, config, salvarConfig, fotos, ponte, enviarArquivo, apagarArquivos, urlPublica, rpc,
+    perfil, eu: () => S.eu, atualizarEu, criarLogin, trocarSenha, emailUsuario,
     conectado: () => !!(S.sb && S.sessao),
     pronto: () => !!S.pronto,
     projeto: () => S.sb,

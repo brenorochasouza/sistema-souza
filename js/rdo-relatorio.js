@@ -28,7 +28,10 @@ window.RDO = (function () {
     ['contratante', 'Solicitação do contratante'], ['projeto', 'Mudança de projeto'], ['acidente', 'Acidente ou incidente'], ['visita', 'Visita técnica'],
     ['fiscalizacao', 'Fiscalização'], ['outro', 'Outra']];
   const IMPACTOS = [['nenhum', 'Sem impacto no prazo'], ['atraso', 'Atraso'], ['aditivo', 'Aditivo de prazo']];
-  const PAPEIS = [['responsavel', 'Responsável da obra'], ['fiscal', 'Fiscal da obra'], ['contratante', 'Contratante']];
+  const PAPEIS = [['responsavel', 'Responsável técnico']];
+  /** Situação do diário: rascunho, aguardando aprovação (enviado pela engenharia) ou aprovado. */
+  const STATUS = { rascunho: ['Rascunho', 'neutro'], revisao: ['Aguardando aprovação', 'atencao'], aprovado: ['Aprovado', 'ok'] };
+  const statusDe = (d) => STATUS[d && d.status] || STATUS.rascunho;
   const nomeDe = (lista, k) => { const x = lista.find((i) => i[0] === k); return x ? x[1] : ''; };
   const GRUPOS_PADRAO = [
     ['Equipe técnica', ['Engenheiro', 'Assistente de engenharia', 'Mestre de obras', 'Encarregado']],
@@ -224,25 +227,27 @@ window.RDO = (function () {
       <div class="rdo-fotos">${fotos.map((f) => `<figure><div class="rdo-ft"><img src="${esc(ctx.fotoSrc ? ctx.fotoSrc(f) : f.url || '')}" alt="" loading="lazy"></div><figcaption>${esc(f.legenda || rotServ(f.servicoId && serv.get(f.servicoId)))}</figcaption></figure>`).join('')}</div>
     </div>` : '';
 
+    // assinaturas: quem elaborou (engenharia, ao enviar para aprovação) e o responsável técnico (ao aprovar)
     const ass = obra.assinantes || {};
-    const colunas = PAPEIS.filter(([k]) => ass[k] && ass[k].nome).map(([k, rot]) => {
-      const p = ass[k];
-      const dadosP = (x) => [x.nome && `<b>${esc(x.nome)}</b>`, x.email && esc(x.email), x.cargo && esc(x.cargo), x.registro && esc(x.registro)].filter(Boolean).join('<br>');
-      if (k === 'responsavel') {
-        const ap = d.aprovador || p;
-        return `<div class="rdo-as">${aprovado && ap.assinatura ? `<img src="${esc(ap.assinatura)}" alt="Assinatura">` : '<div class="rdo-as-vazio"></div>'}
-          ${aprovado ? `<div class="rdo-ok"><i>Aprovado</i> ${dataHora(d.aprovadoEm)}</div>` : '<div class="rdo-as-linha"></div>'}
-          <div class="rdo-as-p">${dadosP(aprovado ? ap : p)}</div><div class="rdo-as-rot">${rot}</div></div>`;
-      }
-      const a = aprovado ? aprovacao(ctx.aprovacoes, d, k) : null;
-      return `<div class="rdo-as"><div class="rdo-as-vazio"></div>
-        ${a ? `<div class="rdo-ok"><i>Aprovado online</i> ${dataHora(a.em)}</div>` : '<div class="rdo-as-linha"></div>'}
-        <div class="rdo-as-p">${dadosP(a && a.nome ? a : p)}</div><div class="rdo-as-rot">${rot}</div></div>`;
-    });
+    const dadosP = (x) => [x.nome && `<b>${esc(x.nome)}</b>`, x.email && esc(x.email), x.cargo && esc(x.cargo), x.registro && esc(x.registro)].filter(Boolean).join('<br>');
+    const colunas = [];
+    const el = d.elaborador;
+    if (el && el.nome && (d.status === 'revisao' || aprovado)) {
+      colunas.push(`<div class="rdo-as">${el.assinatura ? `<img src="${esc(el.assinatura)}" alt="Assinatura">` : '<div class="rdo-as-vazio"></div>'}
+        ${el.em ? `<div class="rdo-ok rdo-ok-el"><i>Enviado</i> ${dataHora(el.em)}</div>` : '<div class="rdo-as-linha"></div>'}
+        <div class="rdo-as-p">${dadosP(el)}</div><div class="rdo-as-rot">Elaborado por</div></div>`);
+    }
+    const resp = ass.responsavel && ass.responsavel.nome ? ass.responsavel : null;
+    if (resp || d.aprovador) {
+      const ap = (aprovado && d.aprovador) || resp;
+      colunas.push(`<div class="rdo-as">${aprovado && ap.assinatura ? `<img src="${esc(ap.assinatura)}" alt="Assinatura">` : '<div class="rdo-as-vazio"></div>'}
+        ${aprovado ? `<div class="rdo-ok"><i>Aprovado</i> ${dataHora(d.aprovadoEm)}</div>` : '<div class="rdo-as-linha"></div>'}
+        <div class="rdo-as-p">${dadosP(ap)}</div><div class="rdo-as-rot">${PAPEIS[0][1]}</div></div>`);
+    }
     const blocoAss = colunas.length ? `<div class="rdo-assin">${colunas.join('')}</div>` : '';
 
     return `<article class="rdo-doc ${ctx.quebra ? 'rdo-quebra' : ''}">
-      <div class="rdo-topo"><span>Relatório <b>${dataBR(d.data)}</b> nº <b>${esc(d.numero)}</b></span><span class="rdo-st ${aprovado ? 'ok' : ''}">${aprovado ? 'Aprovado' : 'Rascunho'}</span></div>
+      <div class="rdo-topo"><span>Relatório <b>${dataBR(d.data)}</b> nº <b>${esc(d.numero)}</b></span><span class="rdo-st ${aprovado ? 'ok' : ''}">${statusDe(d)[0]}</span></div>
       ${cab}
       ${blocoClima}
       ${blocoMao}
@@ -269,7 +274,7 @@ window.RDO = (function () {
   return {
     ajustarZoom,
     esc, dataBR, deISO, isoData, somaDias, difDias, diaSemana, dataHora, num, fmtPct, dias,
-    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, GRUPOS_PADRAO, nomeDe, iconeTempo,
+    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, GRUPOS_PADRAO, nomeDe, iconeTempo,
     servicos, rotServ, rotEtapa, statusPct, ordemDiario, horas, fmtHoras, horario,
     progresso, prazo, dataRef, choveu, impraticavel, totalMao, aprovacao, impactoTxt, diarioHTML,
   };

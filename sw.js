@@ -1,12 +1,13 @@
 /* Guarda uma cópia do sistema no aparelho para abrir sem internet.
    Com internet, sempre busca a versão mais nova e atualiza a cópia. */
-const CACHE = 'souza-1.3.7';
+const CACHE = 'souza-1.4.0';
 const ARQUIVOS = [
   './', 'index.html', 'manifest.webmanifest',
-  'css/estilo.css?v=1.3.7',
-  'js/config.js?v=1.3.7', 'js/nucleo.js?v=1.3.7', 'js/inicio.js?v=1.3.7', 'js/agenda.js?v=1.3.7',
-  'js/clientes.js?v=1.3.7', 'js/orcamentos.js?v=1.3.7', 'js/renovacoes.js?v=1.3.7', 'js/obras.js?v=1.3.7', 'js/rdo-relatorio.js?v=1.3.7', 'js/rdo-dados.js?v=1.3.7', 'js/rdo.js?v=1.3.7', 'js/configuracoes.js?v=1.3.7',
-  'img/logo.png?v=1.3.7', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
+  'css/estilo.css?v=1.4.0',
+  'js/config.js?v=1.4.0', 'js/nucleo.js?v=1.4.0', 'js/inicio.js?v=1.4.0', 'js/agenda.js?v=1.4.0',
+  'js/clientes.js?v=1.4.0', 'js/orcamentos.js?v=1.4.0', 'js/renovacoes.js?v=1.4.0', 'js/obras.js?v=1.4.0', 'js/rdo-relatorio.js?v=1.4.0', 'js/rdo-dados.js?v=1.4.0', 'js/rdo.js?v=1.4.0', 'js/configuracoes.js?v=1.4.0',
+  'rdo/', 'rdo/app.js?v=1.4.0', 'rdo/manifest.webmanifest', 'clientesobras/portal.js?v=1.4.0',
+  'img/logo.png?v=1.4.0', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
   'fonts/instrument-sans-latin-400-normal.woff2', 'fonts/instrument-sans-latin-500-normal.woff2', 'fonts/instrument-sans-latin-600-normal.woff2',
   'fonts/instrument-sans-latin-ext-400-normal.woff2', 'fonts/instrument-sans-latin-ext-500-normal.woff2', 'fonts/instrument-sans-latin-ext-600-normal.woff2',
 ];
@@ -30,9 +31,10 @@ self.addEventListener('fetch', (e) => {
     if (res.ok) { const copia = res.clone(); caches.open(CACHE).then((c) => c.put(req, copia)); }
     return res;
   });
-  // o portal do cliente (clientesobras) nunca cai na tela do sistema
-  const doSistema = req.mode === 'navigate' && !new URL(req.url).pathname.includes('/clientesobras');
-  const doCache = () => caches.match(req).then((r) => r || (doSistema ? caches.match('index.html') : undefined));
+  // o portal antigo (clientesobras) e a entrada do Diário (/rdo) nunca caem na tela do sistema
+  const caminho = new URL(req.url).pathname;
+  const pagina = req.mode !== 'navigate' || caminho.includes('/clientesobras') ? null : /\/rdo(\/|$)/.test(caminho) ? 'rdo/' : 'index.html';
+  const doCache = () => caches.match(req).then((r) => r || (pagina ? caches.match(pagina) : undefined));
   e.respondWith(new Promise((resolve) => {
     let feito = false;
     const entregar = (r) => { if (!feito && r) { feito = true; resolve(r); } };
