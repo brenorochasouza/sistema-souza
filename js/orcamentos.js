@@ -476,11 +476,9 @@
     const ano = String(new Date().getFullYear());
     const aprovAno = contar('aprovado').filter((o) => String(o.data || '').startsWith(ano));
     const decididos = todos.filter((o) => (o.status === 'aprovado' || o.status === 'recusado') && String(o.data || '').startsWith(ano));
-    const achou = (o) => !t || norm([o.titulo, o.codigo, clientes.nome(o.clienteId)].join(' ')).includes(t);
-    // em "Todos" os recusados ficam recolhidos no fim; a aba "Recusado" mostra só eles
-    const vis = todos.filter((o) => (est.filtro === 'todos' ? o.status !== 'recusado' : o.status === est.filtro) && achou(o));
-    const rec = est.filtro === 'todos' ? todos.filter((o) => o.status === 'recusado' && achou(o)) : [];
-    const filtros = [['todos', 'Todos', todos.length - contar('recusado').length]].concat(STATUS.map(([k, n]) => [k, n, contar(k).length]));
+    const vis = todos.filter((o) => (est.filtro === 'todos' || o.status === est.filtro)
+      && (!t || norm([o.titulo, o.codigo, clientes.nome(o.clienteId)].join(' ')).includes(t)));
+    const filtros = [['todos', 'Todos', todos.length]].concat(STATUS.map(([k, n]) => [k, n, contar(k).length]));
     el.innerHTML = `<div class="pagehead"><div><h1>Orçamentos</h1><p>Planilhas orçamentárias por etapas, itens e subitens</p></div>
         <div class="actions"><button class="btn" data-a="orc-importar">${icone('enviar')}Importar planilha</button><button class="btn primary" data-a="orc-novo">${icone('mais')}Novo orçamento</button></div></div>
       ${avisoTabela()}
@@ -493,11 +491,8 @@
       <div class="o-filtros"><div class="seg">${filtros.map(([k, n, q]) => `<button data-a="orc-filtro" data-f="${k}" class="${est.filtro === k ? 'on' : ''}">${n}${q ? ` <span class="o-q">${q}</span>` : ''}</button>`).join('')}</div>
         <div class="o-busca">${icone('busca')}<input class="inp" id="orc-busca" placeholder="Buscar por obra, cliente ou número" value="${esc(est.busca)}" autocomplete="off"></div></div>
       ${vis.length ? `<div class="o-grid">${vis.map(cardOrc).join('')}</div>`
-        : rec.length ? '' : `<div class="card"><div class="empty"><b>${todos.length ? 'Nenhum orçamento neste filtro' : 'Nenhum orçamento ainda'}</b>${todos.length ? 'Troque o filtro ou a busca.' : 'Crie o primeiro orçamento ou importe uma planilha do Excel.'}
-          ${todos.length ? '' : `<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-a="orc-novo">${icone('mais')}Novo orçamento</button></div>`}</div></div>`}
-      ${rec.length ? `<details class="quit o-rec" ${t || est.recAberto ? 'open' : ''}><summary>${rec.length} ${rec.length === 1 ? 'orçamento recusado' : 'orçamentos recusados'}</summary><div class="o-grid">${rec.map(cardOrc).join('')}</div></details>` : ''}`;
-    const det = $('.o-rec', el);
-    if (det) det.addEventListener('toggle', () => { if (!t) est.recAberto = det.open; });
+        : `<div class="card"><div class="empty"><b>${todos.length ? 'Nenhum orçamento neste filtro' : 'Nenhum orçamento ainda'}</b>${todos.length ? 'Troque o filtro ou a busca.' : 'Crie o primeiro orçamento ou importe uma planilha do Excel.'}
+          ${todos.length ? '' : `<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-a="orc-novo">${icone('mais')}Novo orçamento</button></div>`}</div></div>`}`;
     const inp = $('#orc-busca', el);
     inp.addEventListener('input', () => {
       est.busca = inp.value;
