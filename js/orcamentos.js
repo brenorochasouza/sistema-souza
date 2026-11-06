@@ -266,7 +266,7 @@
   const est = {
     id: null, orc: null, ver: null, sujo: false, timer: null, salvo: 'ok',
     desfazer: [], refazer: [], antes: null, recolhidas: new Set(),
-    filtro: 'todos', busca: '', abcTodos: false, cel: false, pintando: false,
+    filtro: 'elaboracao', busca: '', abcTodos: false, cel: false, pintando: false,
   };
   /** Troca o HTML sem que o campo removido (o Chrome dispara focusout na remoção) grave o valor antigo. */
   function trocarHTML(el, html) {
