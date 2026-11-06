@@ -343,6 +343,10 @@ window.RDOB = (function () {
     },
     src(f) { return locais.get(f.id) || (f.path ? urlPublica(f.path) : ''); },
     pendente(f) { const r = F.recs.get(f.id); return r ? { print: !r.printOk, drive: !r.driveOk } : null; },
+    naFila(id) { return F.recs.has(id); },
+    ultimaVez() { return F.ultimaVez || null; },
+    /** A cópia reduzida está no Supabase? */
+    async existe(path) { try { const r = await fetch(urlPublica(path), { method: 'HEAD', cache: 'no-store' }); return r.ok; } catch { return null; } },
     /** Tira a foto do diário: apaga a cópia do Storage e manda a original para a lixeira do Drive. */
     async apagar(f) {
       const r = F.recs.get(f.id);
@@ -358,72 +362,108 @@ window.RDOB = (function () {
       avisarEstado();
       setTimeout(() => fotos.processar(), 300);
     },
+    /** Envia a fila: primeiro a cópia reduzida (Supabase) de todas as fotos, depois as originais (Drive).
+        Uma foto com problema não segura as outras; o último erro fica no aviso. */
     async processar() {
       if (F.rodando || !S.sessao || !S.sb || !navigator.onLine || !F.recs.size) return;
       F.rodando = true;
       const inicio = new Set(F.recs.keys());
+      let erro = null, semRede = false;
       try {
         const cfg = config();
-        for (const meta of [...F.recs.values()]) {
-          const rec = await op('fotos', 'readonly', (s) => s.get(meta.id));
-          if (!rec) { F.recs.delete(meta.id); continue; }
-          if (rec.apagar) {
-            try { if (rec.path) await apagarArquivos([rec.path]); } catch (e) { if (e.status !== 404 && e.status !== 400) throw e; }
-            if (rec.driveId && cfg.ponte.url) { try { await ponte({ acao: 'apagar', ids: [rec.driveId] }, cfg); } catch { /* fica no Drive */ } }
-            await op('fotos', 'readwrite', (s) => { s.delete(rec.id); });
-            F.recs.delete(rec.id);
-            continue;
+        for (const fase of ['print', 'drive']) {
+          if (fase === 'drive' && !cfg.ponte.url) break;
+          let falhas = 0;
+          for (const meta of [...F.recs.values()]) {
+            if (!F.recs.has(meta.id)) continue;
+            try { await passoFoto(meta, fase, cfg); }
+            catch (e) {
+              if (semConexao(e)) { semRede = true; break; }
+              erro = (fase === 'drive' ? 'Drive: ' : '') + (e.message || String(e));
+              // a ponte com problema costuma falhar em todas: depois de 3 erros seguidos, espera a próxima rodada
+              if (++falhas >= 3) break;
+              continue;
+            }
+            falhas = 0;
           }
-          const dRec = store.get('diarios', rec.diarioId);
-          if (!dRec) { await op('fotos', 'readwrite', (s) => { s.delete(rec.id); }); F.recs.delete(rec.id); continue; }
-          if (!rec.printOk) {
-            await enviarArquivo(rec.path, rec.print, 'image/jpeg');
-            rec.printOk = true;
-            await op('fotos', 'readwrite', (s) => { s.put(rec); });
-            meta.printOk = true;
-            avisarEstado();
-          }
-          if (!rec.driveOk && cfg.ponte.url) {
-            const d = dRec.dados, oRec = store.get('obras', rec.obraId);
-            const obra = (oRec && oRec.dados) || {};
-            const lista = window.RDO.servicos(obra);
-            const f = (d.fotos || []).find((x) => x.id === rec.id);
-            if (!f) { await op('fotos', 'readwrite', (s) => { s.delete(rec.id); }); F.recs.delete(rec.id); continue; }
-            const s = lista.find((x) => x.id === f.servicoId);
-            const seq = (d.fotos || []).indexOf(f) + 1;
-            const ext = /png/i.test(rec.tipo) ? 'png' : /heic|heif/i.test(rec.tipo) ? 'heic' : 'jpg';
-            const resp = await ponte({
-              acao: 'foto',
-              obra: pasta(`${obra.contrato ? obra.contrato + ' - ' : ''}${obra.nome || 'Obra'}`),
-              dia: pasta(`${d.data} - RDO nº ${p3(d.numero)}`),
-              nome: pasta(`RDO ${p3(d.numero)} - ${s ? `${s.num ? s.num + ' ' : ''}${s.desc}` : 'Geral da obra'} - ${String(seq).padStart(2, '0')} (${rec.id.slice(0, 6)})`) + '.' + ext,
-              tipo: rec.tipo,
-              base64: await blobBase64(rec.original),
-            }, cfg);
-            marcarDrive(rec.diarioId, rec.obraId, rec.id, resp);
-            rec.driveOk = true;
-          }
-          if (rec.printOk && rec.driveOk) {
-            await op('fotos', 'readwrite', (s) => { s.delete(rec.id); });
-            F.recs.delete(rec.id);
-          } else {
-            rec.original = rec.original || null;
-            await op('fotos', 'readwrite', (s) => { s.put(rec); });
-            F.recs.set(rec.id, { id: rec.id, obraId: rec.obraId, diarioId: rec.diarioId, path: rec.path, printOk: rec.printOk, driveOk: rec.driveOk });
-          }
-          avisarEstado();
+          if (semRede) break;
         }
-        F.erro = null;
-      } catch (e) {
-        F.erro = semConexao(e) ? null : e.message || String(e);
+        F.erro = erro;
       } finally {
         F.rodando = false;
+        F.ultimaVez = Date.now();
         avisarEstado();
         // fotos que entraram na fila durante o envio (importação, várias fotos de uma vez)
-        if (!F.erro && navigator.onLine && [...F.recs.keys()].some((k) => !inicio.has(k))) setTimeout(() => fotos.processar(), 500);
+        if (!F.erro && !semRede && navigator.onLine && [...F.recs.keys()].some((k) => !inicio.has(k))) setTimeout(() => fotos.processar(), 500);
       }
     },
+    /** Confere no Supabase se a cópia de cada foto das obras existe. Devolve as que faltam. */
+    async conferir(progresso) {
+      const lista = [];
+      store.lista('diarios').forEach((r) => (r.dados.fotos || []).forEach((f) => { if (f.path) lista.push({ f, diarioId: r.id, obraId: r.grupo, d: r.dados }); }));
+      const faltam = [];
+      let feitas = 0, i = 0;
+      const vai = async () => {
+        while (i < lista.length) {
+          const x = lista[i++];
+          let ok = false;
+          try { const res = await fetch(urlPublica(x.f.path), { method: 'HEAD', cache: 'no-store' }); ok = res.ok; } catch { ok = false; }
+          if (!ok) faltam.push(Object.assign(x, { naFila: F.recs.has(x.f.id) }));
+          feitas++; if (progresso) progresso(feitas, lista.length);
+        }
+      };
+      await Promise.all([vai(), vai(), vai(), vai(), vai(), vai()]);
+      return { total: lista.length, faltam };
+    },
   };
+  /** Um passo da fila para uma foto: 'print' (exclusão e cópia reduzida) ou 'drive' (original). */
+  async function passoFoto(meta, fase, cfg) {
+    const rec = await op('fotos', 'readonly', (s) => s.get(meta.id));
+    if (!rec) { F.recs.delete(meta.id); return; }
+    if (rec.apagar) {
+      if (fase !== 'print') return;
+      try { if (rec.path) await apagarArquivos([rec.path]); } catch (e) { if (e.status !== 404 && e.status !== 400) throw e; }
+      if (rec.driveId && cfg.ponte.url) { try { await ponte({ acao: 'apagar', ids: [rec.driveId] }, cfg); } catch { /* fica no Drive */ } }
+      await op('fotos', 'readwrite', (s) => { s.delete(rec.id); });
+      F.recs.delete(rec.id);
+      return;
+    }
+    const dRec = store.get('diarios', rec.diarioId);
+    if (!dRec) { await op('fotos', 'readwrite', (s) => { s.delete(rec.id); }); F.recs.delete(rec.id); return; }
+    if (fase === 'print' && !rec.printOk) {
+      await enviarArquivo(rec.path, rec.print, 'image/jpeg');
+      rec.printOk = true;
+    }
+    if (fase === 'drive' && !rec.driveOk && cfg.ponte.url) {
+      const d = dRec.dados, oRec = store.get('obras', rec.obraId);
+      const obra = (oRec && oRec.dados) || {};
+      const lista = window.RDO.servicos(obra);
+      const f = (d.fotos || []).find((x) => x.id === rec.id);
+      if (!f) { await op('fotos', 'readwrite', (s) => { s.delete(rec.id); }); F.recs.delete(rec.id); return; }
+      const sv = lista.find((x) => x.id === f.servicoId);
+      const seq = (d.fotos || []).indexOf(f) + 1;
+      const ext = /png/i.test(rec.tipo) ? 'png' : /heic|heif/i.test(rec.tipo) ? 'heic' : 'jpg';
+      const resp = await ponte({
+        acao: 'foto',
+        obra: pasta(`${obra.contrato ? obra.contrato + ' - ' : ''}${obra.nome || 'Obra'}`),
+        dia: pasta(`${d.data} - RDO nº ${p3(d.numero)}`),
+        nome: pasta(`RDO ${p3(d.numero)} - ${sv ? `${sv.num ? sv.num + ' ' : ''}${sv.desc}` : 'Geral da obra'} - ${String(seq).padStart(2, '0')} (${rec.id.slice(0, 6)})`) + '.' + ext,
+        tipo: rec.tipo,
+        base64: await blobBase64(rec.original),
+      }, cfg);
+      marcarDrive(rec.diarioId, rec.obraId, rec.id, resp);
+      rec.driveOk = true;
+    }
+    if (rec.printOk && rec.driveOk) {
+      await op('fotos', 'readwrite', (s) => { s.delete(rec.id); });
+      F.recs.delete(rec.id);
+    } else {
+      rec.original = rec.original || null;
+      await op('fotos', 'readwrite', (s) => { s.put(rec); });
+      F.recs.set(rec.id, { id: rec.id, obraId: rec.obraId, diarioId: rec.diarioId, path: rec.path, printOk: rec.printOk, driveOk: rec.driveOk });
+    }
+    avisarEstado();
+  }
   /** Grava no diário o endereço da original no Drive (sem mexer no resto do diário). */
   function marcarDrive(diarioId, obraId, fotoId, resp) {
     const r = store.get('diarios', diarioId);

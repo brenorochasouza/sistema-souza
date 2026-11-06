@@ -1104,9 +1104,10 @@
         <div class="card"><div class="hd"><div><h3>Importar obra</h3><p>Traz uma obra de outro sistema: cadastro, diários e fotos, a partir do pacote .zip de importação.</p></div></div><div class="bd">
           <div class="actions"><label class="btn">${icone('enviar')}Escolher pacote (.zip)<input type="file" accept=".zip,application/zip" data-importar hidden></label></div>
           <p class="small muted">Use no computador, com internet, e deixe a tela aberta até as fotos terminarem de subir.</p></div></div>
+        <div class="card"><div class="hd"><div><h3>Fotos</h3><p>Cada foto sobe do aparelho onde foi tirada ou importada. Enquanto não sobe, só aparece nele.</p></div></div><div class="bd" id="rdo-fotos-st">${htmlFotosSt()}</div></div>
         <div class="card"><div class="hd"><div><h3>Conexão e espaço</h3></div></div><div class="bd">
           <dl class="kv"><dt>Projeto</dt><dd>${esc(p ? p.url.replace(/^https?:\/\//, '') : '-')}</dd><dt>Conta</dt><dd>${esc(B.conta() || '-')}</dd>
-            <dt>Fotos na fila</dt><dd>${f.enviar + f.ponte}</dd><dt>Espaço das fotos</dt><dd id="rdo-espaco">Calculando…</dd></dl>
+            <dt>Espaço das fotos</dt><dd id="rdo-espaco">Calculando…</dd></dl>
           <p class="small muted">O plano grátis do Supabase tem 1 GB para arquivos. Cada foto reduzida ocupa cerca de 150 KB.</p>
           <div class="actions"><button class="btn" data-a="rdo-sync">${icone('nuvem')}Sincronizar agora</button><button class="btn" data-a="rdo-sair">${icone('sair')}Desconectar este aparelho</button></div></div></div>
       </div>`;
@@ -1114,6 +1115,55 @@
     B.rpc('rdo_espaco').then((n) => { const e = $('#rdo-espaco'); if (e) { const mb = (Number(n) || 0) / 1048576; e.textContent = `${mb < 10 ? mb.toFixed(1).replace('.', ',') : Math.round(mb)} MB de 1.024 MB (${((mb / 1024) * 100).toFixed(1).replace('.', ',')}%)`; } })
       .catch(() => { const e = $('#rdo-espaco'); if (e) e.textContent = navigator.onLine ? 'Não disponível' : 'Sem internet'; });
   }
+  /** Situação da fila de fotos deste aparelho, nas configurações. */
+  function htmlFotosSt() {
+    const f = B.fotos.contagem(), cfg = cfgRdo();
+    const n = f.enviar + f.ponte;
+    const linhas = n ? `<dl class="kv"><dt>Neste aparelho</dt><dd><b>${n} ${n === 1 ? 'foto aguardando envio' : 'fotos aguardando envio'}</b></dd>
+        ${f.ponte ? `<dt>Só falta o Drive</dt><dd>${f.ponte} ${f.ponte === 1 ? 'foto' : 'fotos'} (a cópia para o diário já subiu)</dd>` : ''}
+        ${!cfg.ponte.url ? '<dt>Ponte do Drive</dt><dd>Não configurada: as originais esperam por ela</dd>' : ''}</dl>`
+      : '<p class="r-ok-txt">Nenhuma foto esperando envio neste aparelho.</p>';
+    const erro = f.erro ? `<div class="r-aviso erro"><b>O último envio deu erro</b><span>${esc(f.erro)}</span></div>` : '';
+    return `${linhas}${erro}
+      <div class="actions">${n ? `<button class="btn primary" data-a="rdo-fotos-enviar">${icone('nuvem')}Enviar agora</button>` : ''}<button class="btn" data-a="rdo-fotos-conferir">${icone('check')}Conferir as fotos das obras</button></div>
+      <div data-q="conferir"></div>`;
+  }
+  A['rdo-fotos-enviar'] = async () => {
+    if (!navigator.onLine) { ui.toast('Sem internet agora. As fotos sobem quando a conexão voltar.'); return; }
+    ui.toast('Enviando as fotos…');
+    await B.fotos.processar();
+    const el = $('#rdo-fotos-st'); if (el) el.innerHTML = htmlFotosSt();
+    const f = B.fotos.contagem();
+    ui.toast(f.erro ? 'Algumas fotos não subiram. Veja o erro no quadro Fotos.' : f.enviar + f.ponte ? 'Ainda há fotos subindo.' : 'Todas as fotos deste aparelho foram enviadas.');
+  };
+  A['rdo-fotos-conferir'] = async (b) => {
+    if (!navigator.onLine) { ui.toast('Para conferir é preciso internet.'); return; }
+    const alvo = $('[data-q=conferir]');
+    b.disabled = true;
+    const r = await B.fotos.conferir((k, n) => { if (alvo) alvo.innerHTML = `<p class="small muted">Conferindo ${k} de ${n} fotos…</p>`; });
+    b.disabled = false;
+    if (!alvo) return;
+    if (!r.faltam.length) { alvo.innerHTML = `<p class="r-ok-txt">As ${r.total} fotos das obras estão no Supabase e abrem em qualquer aparelho.</p>`; return; }
+    const grupos = new Map();
+    r.faltam.forEach((x) => { const k = x.diarioId; if (!grupos.has(k)) grupos.set(k, { x, n: 0, fila: 0 }); const g = grupos.get(k); g.n++; if (x.naFila) g.fila++; });
+    const nFila = r.faltam.filter((x) => x.naFila).length, fora = r.faltam.length - nFila;
+    alvo.innerHTML = `<div class="r-aviso"><b>${r.faltam.length} de ${r.total} fotos ainda não estão no Supabase</b>
+        <span>${nFila ? `${nFila} ${nFila === 1 ? 'está' : 'estão'} neste aparelho e ${nFila === 1 ? 'sobe' : 'sobem'} com "Enviar agora". ` : ''}${fora ? `${fora} ${fora === 1 ? 'está' : 'estão'} em outro aparelho: abra o sistema no aparelho onde ${fora === 1 ? 'a foto foi tirada ou importada' : 'as fotos foram tiradas ou importadas'} e deixe a tela aberta até terminar. Se veio de uma importação, escolher o mesmo pacote de novo em "Importar obra" manda as que faltam.` : ''}</span></div>
+      <ul class="r-falta">${[...grupos.values()].map(({ x, n, fila }) => { const o = obra(x.obraId); return `<li><b>${esc(o ? o.nome : 'Obra')}</b> · RDO nº ${esc(String(x.d.numero))} (${R.dataBR(x.d.data)}): ${n} ${n === 1 ? 'foto' : 'fotos'}${fila === n ? ' neste aparelho' : fila ? `, ${fila} neste aparelho` : ''}</li>`; }).join('')}</ul>`;
+  };
+
+  /* Foto que ainda não está no Supabase: no lugar da imagem quebrada, um aviso. */
+  document.addEventListener('error', (ev) => {
+    const img = ev.target;
+    if (!(img instanceof HTMLImageElement) || img.dataset.semfoto || !/\/storage\/v1\/object\/public\/rdo-fotos\//.test(img.src)) return;
+    img.dataset.semfoto = '1';
+    const ph = document.createElement('div');
+    ph.className = 'r-semfoto';
+    ph.title = 'A foto ainda não subiu do aparelho onde foi tirada ou importada. Abra o sistema nele para terminar o envio.';
+    ph.innerHTML = '<b>Foto ainda não enviada</b><span>Está no aparelho onde foi tirada</span>';
+    img.replaceWith(ph);
+  }, true);
+
   /* =========================================================
      Importação de obra (pacote .zip feito a partir de outro sistema)
      ========================================================= */
@@ -1165,7 +1215,23 @@
     const novos = pac.diarios.filter((d) => !B.store.get('diarios', d.id));
     const nFotos = novos.reduce((s, d) => s + (d.fotos || []).length, 0);
     const nAprov = novos.filter((d) => d.dados && d.dados.status === 'aprovado').length;
-    if (existe && !novos.length) { ui.alerta({ titulo: 'Nada para importar', msg: `A obra ${existe.nome} já está aqui com todos os diários deste pacote.` }); return; }
+    // diários já importados: as fotos que não chegaram ao Supabase (e não estão na fila deste aparelho) vão de novo
+    const repor = [];
+    const jaTem = pac.diarios.filter((d) => B.store.get('diarios', d.id));
+    if (jaTem.length && navigator.onLine) {
+      const cands = [];
+      jaTem.forEach((pd) => {
+        const dS = B.store.get('diarios', pd.id).dados;
+        (pd.fotos || []).forEach((pf) => { const fS = (dS.fotos || []).find((x) => x.id === pf.id); if (fS && fS.path && !B.fotos.naFila(pf.id)) cands.push({ pd, pf, path: fS.path }); });
+      });
+      if (cands.length) {
+        ui.toast(`Conferindo ${cands.length} fotos já importadas…`);
+        let k = 0;
+        const vai = async () => { while (k < cands.length) { const c = cands[k++]; if ((await B.fotos.existe(c.path)) === false) repor.push(c); } };
+        await Promise.all([vai(), vai(), vai(), vai(), vai(), vai()]);
+      }
+    }
+    if (existe && !novos.length && !repor.length) { ui.alerta({ titulo: 'Nada para importar', msg: `A obra ${existe.nome} já está aqui com todos os diários deste pacote, e as fotos já estão no Supabase.` }); return; }
     const usarAss = !cfg.assinatura && pac.assinatura && z.nomes.includes(pac.assinatura);
     const avisos = [];
     if (usarAss) avisos.push('Você ainda não tem assinatura nas configurações: vou usar a assinatura que veio no pacote. Dá para trocar depois.');
@@ -1173,7 +1239,7 @@
     if (!cfg.ponte.url) avisos.push('A ponte do Google Drive não está configurada: as fotos em alta qualidade sobem para o Drive quando você configurar.');
     const ok = await ui.confirmar({
       titulo: `Importar ${pac.obra.nome}?`,
-      msg: `${existe ? 'Esta obra já está aqui. Só entram os diários que ainda não foram importados.\n\n' : ''}${novos.length} diários (${nAprov} aprovados e ${novos.length - nAprov} em rascunho) e ${nFotos} fotos.${avisos.length ? '\n\n' + avisos.join('\n') : ''}\n\nDeixe esta tela aberta até as fotos terminarem de subir.`,
+      msg: `${existe ? 'Esta obra já está aqui. Só entram os diários que ainda não foram importados.\n\n' : ''}${novos.length || !repor.length ? `${novos.length} diários (${nAprov} aprovados e ${novos.length - nAprov} em rascunho) e ${nFotos} fotos.` : ''}${repor.length ? `${novos.length ? '\n\n' : ''}${repor.length} ${repor.length === 1 ? 'foto já importada não chegou' : 'fotos já importadas não chegaram'} ao Supabase e ${repor.length === 1 ? 'vai' : 'vão'} de novo.` : ''}${avisos.length ? '\n\n' + avisos.join('\n') : ''}\n\nDeixe esta tela aberta até as fotos terminarem de subir.`,
       ok: 'Importar',
     });
     if (!ok) return;
@@ -1225,6 +1291,15 @@
         gravarDiario(d);
         for (const x of fila) await B.fotos.adicionar(x);
         feitas += fila.length;
+      }
+      for (const [i, c] of repor.entries()) {
+        passo(`Reenviando foto ${i + 1} de ${repor.length}`, i / repor.length);
+        const b = await z.bytes(c.pf.arquivo);
+        if (!b) continue;
+        const original = new Blob([b], { type: 'image/jpeg' });
+        const red = await reduzir(original, 1280, 'image/jpeg', 0.72);
+        await B.fotos.adicionar({ id: c.pf.id, obraId: o.id, diarioId: c.pd.id, path: c.path, print: red.blob, original, tipo: 'image/jpeg' });
+        feitas++;
       }
       prog.fechar();
       ui.toast(`${pac.obra.nome}: ${novos.length} diários e ${feitas} fotos importados. As fotos estão subindo.`);

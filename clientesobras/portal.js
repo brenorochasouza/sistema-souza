@@ -14,7 +14,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = '../img/logo.png?v=1.3.5';
+  const LOGO = '../img/logo.png?v=1.3.6';
   const PAPEL = { cliente: 'Cliente', fiscal: 'Fiscal da obra', contratante: 'Contratante' };
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
@@ -199,4 +199,15 @@
 
   const salvo = guardar.get();
   if (salvo) entrar(salvo, true); else telaEntrada();
+
+  /* Foto que ainda não está disponível: um aviso no lugar da imagem quebrada. */
+  document.addEventListener('error', (ev) => {
+    const img = ev.target;
+    if (!(img instanceof HTMLImageElement) || img.dataset.semfoto || !/\/storage\/v1\/object\/public\/rdo-fotos\//.test(img.src)) return;
+    img.dataset.semfoto = '1';
+    const ph = document.createElement('div');
+    ph.className = 'r-semfoto';
+    ph.innerHTML = '<b>Foto indisponível no momento</b><span>Tente de novo mais tarde</span>';
+    img.replaceWith(ph);
+  }, true);
 })();
