@@ -579,6 +579,36 @@
     if (n) ui.toast(n === 1 ? 'Foto adicionada.' : `${n} fotos adicionadas.`);
     repintar();
   }
+  const escolherFoto = (fn) => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.addEventListener('change', () => { if (inp.files && inp.files[0]) fn(inp.files[0]); });
+    inp.click();
+  };
+  /** Troca a imagem de uma foto do diário: fica no mesmo lugar, com o mesmo serviço e legenda. A antiga sai do Supabase e do Drive. */
+  async function trocarFoto(fotoId, arq) {
+    const ctx = contexto(); if (!ctx) return;
+    const { o, d } = ctx;
+    const i = d.fotos.findIndex((x) => x.id === fotoId); if (i < 0) return;
+    const velha = d.fotos[i];
+    ui.toast('Preparando a foto…');
+    try {
+      const red = await reduzir(arq, 1280, 'image/jpeg', 0.72);
+      const id = uid(), path = `${o.id}/${d.id}/${id}.jpg`;
+      d.fotos[i] = Object.assign({}, velha, { id, path, w: red.w, h: red.h, drive: null, em: new Date().toISOString() });
+      est.sujo = true; salvarAgora();
+      await B.fotos.adicionar({ id, obraId: o.id, diarioId: d.id, path, print: red.blob, original: arq, tipo: arq.type });
+      await B.fotos.apagar(velha);
+      repintar();
+      ui.toast('Foto trocada. Ela já está subindo.');
+    } catch (e) { ui.toast(`${arq.name}: ${e.message}`, 'erro'); }
+  }
+  A['rdo-foto-trocar'] = (b) => {
+    const ctx = contexto(); if (!ctx) return;
+    if (ctx.d.status === 'aprovado') { ui.toast('Reabra o diário para trocar a foto.'); return; }
+    const id = b.dataset.id;
+    escolherFoto((arq) => trocarFoto(id, arq));
+  };
   A['rdo-foto'] = (b) => {
     const ctx = contexto(); if (!ctx) return;
     const { o, d } = ctx;
@@ -586,11 +616,12 @@
     const pd = B.fotos.pendente(f);
     ui.abrirModal({
       titulo: 'Foto', largo: true,
-      corpo: `<div class="r-ft-g"><img src="${esc(B.fotos.src(f))}" alt=""></div>
+      corpo: `<div class="r-ft-g"><img src="${esc(B.fotos.src(f))}" alt="" data-foto="${esc(f.id)}"></div>
         <div class="grid2"><label class="f"><span>Serviço</span><select class="inp" name="serv">${opcoesServ(o, f.servicoId, 'Geral da obra')}</select></label>
         <label class="f"><span>Legenda</span><input class="inp" name="leg" value="${esc(f.legenda || '')}" placeholder="Vazio: usa o nome do serviço"></label></div>
         <p class="small muted">${f.drive && f.drive.url ? `<a href="${esc(f.drive.url)}" target="_blank" rel="noopener">Abrir a original no Drive</a>` : pd ? (pd.print ? 'Enviando a foto…' : 'A original sobe para o Drive quando a ponte estiver configurada e houver internet.') : ''}</p>`,
       botoes: [
+        { rot: 'Trocar a foto', esq: true, acao: (m) => { m.fechar(); escolherFoto((arq) => trocarFoto(f.id, arq)); } },
         { rot: 'Excluir foto', classe: 'danger', esq: true, acao: async (m) => { d.fotos = d.fotos.filter((x) => x.id !== f.id); est.sujo = true; salvarAgora(); await B.fotos.apagar(f); m.fechar(); repintar(); ui.toast('Foto excluída.'); } },
         { rot: 'Cancelar' },
         { rot: 'Salvar', classe: 'primary', acao: (m) => { f.servicoId = $('[name=serv]', m.el).value; f.legenda = $('[name=leg]', m.el).value.trim(); est.sujo = true; salvarAgora(); m.fechar(); repintar(); } },
@@ -1149,7 +1180,8 @@
     const nFila = r.faltam.filter((x) => x.naFila).length, fora = r.faltam.length - nFila;
     alvo.innerHTML = `<div class="r-aviso"><b>${r.faltam.length} de ${r.total} fotos ainda não estão no Supabase</b>
         <span>${nFila ? `${nFila} ${nFila === 1 ? 'está' : 'estão'} neste aparelho e ${nFila === 1 ? 'sobe' : 'sobem'} com "Enviar agora". ` : ''}${fora ? `${fora} ${fora === 1 ? 'está' : 'estão'} em outro aparelho: abra o sistema no aparelho onde ${fora === 1 ? 'a foto foi tirada ou importada' : 'as fotos foram tiradas ou importadas'} e deixe a tela aberta até terminar. Se veio de uma importação, escolher o mesmo pacote de novo em "Importar obra" manda as que faltam.` : ''}</span></div>
-      <ul class="r-falta">${[...grupos.values()].map(({ x, n, fila }) => { const o = obra(x.obraId); return `<li><b>${esc(o ? o.nome : 'Obra')}</b> · RDO nº ${esc(String(x.d.numero))} (${R.dataBR(x.d.data)}): ${n} ${n === 1 ? 'foto' : 'fotos'}${fila === n ? ' neste aparelho' : fila ? `, ${fila} neste aparelho` : ''}</li>`; }).join('')}</ul>`;
+      <ul class="r-falta">${[...grupos.values()].map(({ x, n, fila }) => { const o = obra(x.obraId); return `<li><a href="#/rdo/${esc(x.obraId)}/d/${esc(x.diarioId)}"><b>${esc(o ? o.nome : 'Obra')}</b> · RDO nº ${esc(String(x.d.numero))} (${R.dataBR(x.d.data)})</a>: ${n} ${n === 1 ? 'foto' : 'fotos'}${fila === n ? ' neste aparelho' : fila ? `, ${fila} neste aparelho` : ''}</li>`; }).join('')}</ul>
+      <p class="small muted">Abra o diário (reabra, se estiver aprovado) e toque em "Escolher de novo" em cada foto que não carregou.</p>`;
   };
 
   /* Foto que ainda não está no Supabase: no lugar da imagem quebrada, um aviso. */
@@ -1157,10 +1189,17 @@
     const img = ev.target;
     if (!(img instanceof HTMLImageElement) || img.dataset.semfoto || !/\/storage\/v1\/object\/public\/rdo-fotos\//.test(img.src)) return;
     img.dataset.semfoto = '1';
+    const ft = img.closest('.r-ft[data-id]'), gr = img.closest('.r-ft-g');
+    const id = ft ? ft.dataset.id : img.dataset.foto;
+    const ctx = contexto();
+    const aprovado = !!(ctx && ctx.d.status === 'aprovado');
+    const pode = !!(ctx && !aprovado && id && (ft || gr) && ctx.d.fotos.some((x) => x.id === id));
     const ph = document.createElement('div');
-    ph.className = 'r-semfoto';
-    ph.title = 'A foto ainda não subiu do aparelho onde foi tirada ou importada. Abra o sistema nele para terminar o envio.';
-    ph.innerHTML = '<b>Foto ainda não enviada</b><span>Está no aparelho onde foi tirada</span>';
+    ph.className = 'r-semfoto' + (ft ? ' mini' : '');
+    ph.title = 'A foto ainda não subiu do aparelho onde foi tirada ou importada.';
+    ph.innerHTML = ft
+      ? `<b>Foto não enviada</b>${pode ? `<span class="r-semfoto-bt" data-a="rdo-foto-trocar" data-id="${esc(id)}">Escolher de novo</span>` : ''}`
+      : `<b>Foto ainda não enviada</b><span>${pode ? 'Escolha a mesma foto (ou outra) para ela ir de novo' : aprovado ? 'Para enviar de novo, reabra o diário' : 'Está no aparelho onde foi tirada'}</span>${pode ? `<button type="button" class="btn sm" data-a="rdo-foto-trocar" data-id="${esc(id)}">Escolher a foto de novo</button>` : ''}`;
     img.replaceWith(ph);
   }, true);
 

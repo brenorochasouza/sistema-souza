@@ -1173,6 +1173,11 @@ body.o-arrastando,body.o-arrastando *{cursor:grabbing!important;user-select:none
 .r-falta{margin:0 0 6px;padding-left:18px;font-size:13px;line-height:1.7}
 .r-semfoto{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:100%;aspect-ratio:4/3;background:#F4F2EE;border:1.5px dashed #CFC9BF;border-radius:6px;color:#7A7368;text-align:center;padding:6px;font-size:10.5px;line-height:1.3;overflow:hidden}
 .r-semfoto b{font-size:11.5px;color:#5B554C;font-weight:600}
+.r-semfoto .btn{margin-top:6px}
+.r-semfoto.mini{border-radius:0;border-width:0 0 1.5px;gap:5px}
+.r-semfoto-bt{display:inline-block;padding:3px 9px;border-radius:999px;background:var(--brand);color:#fff;font-size:11px;font-weight:600}
+.r-ft-g .r-semfoto{aspect-ratio:auto;min-height:220px;font-size:12.5px}
+.r-ft-g .r-semfoto b{font-size:14px}
 .r-filtro{margin-bottom:14px}
 .r-obras{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
 .r-obra{display:flex;flex-direction:column}
