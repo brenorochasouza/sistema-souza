@@ -1470,3 +1470,18 @@ body.portal{background:var(--bg)}
 .pt-obra{color:inherit;text-decoration:none}
 .pt-obra:hover{border-color:var(--line-2)}
 @media (max-width:760px){.pt-topo-a .btn span{display:none}}
+
+/* ---------- Diário de obra: apagar a obra do sistema ---------- */
+.r-apg-card .hd{align-items:center}
+.r-apg-l{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:9px}
+.r-apg-l li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.45;color:var(--ink-2)}
+.r-apg-l li .ic{width:18px;height:18px;flex:none;margin-top:1px;color:var(--muted)}
+.r-apg-l li.ok .ic{color:var(--ok)}
+.r-apg-l li.aviso .ic{color:var(--warn)}
+.r-apg-l b{color:var(--ink);font-weight:600}
+.r-apg-b{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.r-apg-b b{display:block;font-size:13.5px}
+.r-apg-b small{display:block;color:var(--muted);font-size:12.5px;margin:2px 0 10px}
+.r-apg-b .actions{gap:8px;flex-wrap:wrap}
+.r-apg-prog{margin:12px 0 0;font-size:13px;color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 12px}
+.r-apg-prog.erro{background:#FBEAEA;color:#8A1F2B}

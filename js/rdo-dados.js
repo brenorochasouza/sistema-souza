@@ -93,6 +93,22 @@ window.RDOB = (function () {
       for (const t of TAB) await kv.del('cursor:' + t);
     },
     ouvir(fn) { ouvintes.add(fn); return () => ouvintes.delete(fn); },
+    /** Tira do aparelho tudo de uma obra apagada (diários, aprovações e, se pedir, a própria obra). */
+    async purgarObra(obraId, { obra = false } = {}) {
+      const ks = [];
+      for (const t of ['diarios', 'aprovacoes']) {
+        for (const r of [...mapas[t].values()]) if (r.grupo === obraId || (r.dados && r.dados.obraId === obraId)) { mapas[t].delete(r.id); ks.push(t + '|' + r.id); }
+      }
+      if (obra && mapas.obras.has(obraId)) { mapas.obras.delete(obraId); ks.push('obras|' + obraId); }
+      ks.forEach((k) => pend.delete(k));
+      if (ks.length) {
+        await fila;
+        await op('reg', 'readwrite', (s) => { ks.forEach((k) => s.delete(k)); });
+        await op('pend', 'readwrite', (s) => { ks.forEach((k) => s.delete(k)); });
+      }
+      await fotos.purgarObra(obraId);
+      return ks.length;
+    },
   };
 
   /* ---------------- conexão com o projeto do RDO ---------------- */
@@ -300,6 +316,7 @@ window.RDOB = (function () {
   }
   async function baixar() {
     let mudou = false;
+    const apagadas = [];
     for (const t of TAB) {
       const cursor = (await kv.get('cursor:' + t)) || null;
       let desde = cursor ? new Date(Date.parse(cursor) - 120000).toISOString() : '1970-01-01T00:00:00Z';
@@ -318,6 +335,7 @@ window.RDOB = (function () {
             continue;
           }
           const row = { id: rem.id, tipo: rem.tipo, grupo: rem.grupo, dados: rem.dados || {}, atualizado_em: new Date(tRem).toISOString(), excluido: !!rem.excluido };
+          if (t === 'obras' && row.excluido && row.dados.apagada) apagadas.push(row.id);
           mapas[t].set(row.id, row);
           salvar.push(Object.assign({ k, t }, row));
           if (pend.has(k)) { pend.delete(k); limpos.push(k); }
@@ -330,6 +348,8 @@ window.RDOB = (function () {
       }
       if (maior && maior !== cursor) await kv.set('cursor:' + t, maior);
     }
+    // obra apagada em outro aparelho: some daqui também
+    for (const id of apagadas) { if (await store.purgarObra(id)) mudou = true; }
     return mudou;
   }
   window.addEventListener('online', () => { S.online = true; sync.agora(); });
@@ -385,6 +405,23 @@ window.RDOB = (function () {
     if (!paths.length) return;
     await req(`/storage/v1/object/${BUCKET}`, { method: 'DELETE', json: { prefixes: paths } });
   }
+  /** Lista os arquivos de uma pasta do Storage, com as subpastas: [{ path, size }]. */
+  async function listarArquivos(pasta) {
+    const out = [];
+    const ler = async (pfx, nivel) => {
+      for (let ini = 0; ini < 100000; ini += 1000) {
+        const itens = (await req(`/storage/v1/object/list/${BUCKET}`, { method: 'POST', json: { prefix: pfx, limit: 1000, offset: ini, sortBy: { column: 'name', order: 'asc' } } })) || [];
+        for (const it of itens) {
+          if (!it.name || it.name === '.emptyFolderPlaceholder') continue;
+          if (it.id === null || it.id === undefined) { if (nivel < 4) await ler(`${pfx}/${it.name}`, nivel + 1); }
+          else out.push({ path: `${pfx}/${it.name}`, size: Number((it.metadata && it.metadata.size) || 0) });
+        }
+        if (itens.length < 1000) break;
+      }
+    };
+    await ler(String(pasta).replace(/\/+$/, ''), 0);
+    return out;
+  }
   const rpc = (fn, body = {}) => req('/rest/v1/rpc/' + fn, { method: 'POST', json: body });
 
   /* ---------------- ponte do Google Drive ---------------- */
@@ -429,6 +466,15 @@ window.RDOB = (function () {
     },
     src(f) { return locais.get(f.id) || (f.path ? urlPublica(f.path) : ''); },
     pendente(f) { const r = F.recs.get(f.id); return r ? { print: !r.printOk, drive: !r.driveOk } : null; },
+    /** Fotos desta obra ainda na fila deste aparelho (sem contar as marcadas para apagar). */
+    daObra(obraId) { return [...F.recs.values()].filter((r) => r.obraId === obraId && !r.apagar); },
+    async purgarObra(obraId) {
+      const ids = [...F.recs.values()].filter((r) => r.obraId === obraId).map((r) => r.id);
+      if (!ids.length) return;
+      ids.forEach((id) => { F.recs.delete(id); const u = locais.get(id); if (u) { URL.revokeObjectURL(u); locais.delete(id); } });
+      await op('fotos', 'readwrite', (s) => { ids.forEach((id) => s.delete(id)); });
+      avisarEstado();
+    },
     naFila(id) { return F.recs.has(id); },
     ultimaVez() { return F.ultimaVez || null; },
     /** A cópia reduzida está no Supabase? */
@@ -579,7 +625,8 @@ window.RDOB = (function () {
   }
 
   return {
-    TAB, store, sync, estado, iniciar, conectar, desconectar, config, salvarConfig, fotos, ponte, enviarArquivo, apagarArquivos, urlPublica, rpc,
+    TAB, store, sync, estado, iniciar, conectar, desconectar, config, salvarConfig, fotos, ponte, enviarArquivo, apagarArquivos, listarArquivos, urlPublica, rpc,
+    nomePasta: (s) => pasta(s), blobBase64: (b) => blobBase64(b), p3: (n) => p3(n),
     perfil, eu: () => S.eu, atualizarEu, criarLogin, trocarSenha, emailUsuario,
     conectado: () => !!(S.sb && S.sessao),
     pronto: () => !!S.pronto,
@@ -589,5 +636,6 @@ window.RDOB = (function () {
     ultima: () => S.ultima,
     ouvirEstado: (fn) => { estadoOuvintes.add(fn); return () => estadoOuvintes.delete(fn); },
     pendentes: () => pend.size,
+    ocupado: () => S.sincronizando,
   };
 })();

@@ -1039,8 +1039,10 @@
         ${codigosAntigos ? `<div class="bd r-cod-ant"><div><b>Códigos antigos do portal</b><small>Esta obra ainda abre em /clientesobras com o código da obra (só consulta). Desligue quando os clientes já tiverem usuário e senha.</small></div><button class="btn sm" data-a="rdo-cod-desligar">Desligar códigos antigos</button></div>` : ''}
       </section>
 
-      <section class="card"><div class="hd"><h3>Fotos no Drive</h3></div><div class="bd"><p class="small muted">${o.drivePasta ? `As originais em alta qualidade ficam na <a href="${esc(o.drivePasta)}" target="_blank" rel="noopener">pasta desta obra no Drive</a>, uma subpasta por diário.` : 'A pasta da obra no Drive é criada quando a primeira foto subir pela ponte.'}</p>
-        <div class="actions"><button class="btn danger" data-a="rdo-obra-x">${icone('lixo')}Excluir obra</button></div></div></section>
+      <section class="card"><div class="hd"><h3>Fotos no Drive</h3></div><div class="bd"><p class="small muted">${o.drivePasta ? `As originais em alta qualidade ficam na <a href="${esc(o.drivePasta)}" target="_blank" rel="noopener">pasta desta obra no Drive</a>, uma subpasta por diário.` : 'A pasta da obra no Drive é criada quando a primeira foto subir pela ponte.'}</p></div></section>
+
+      <section class="card r-apg-card"><div class="hd"><div><h3>Apagar obra do sistema</h3><p>Quando a obra terminar: apaga os diários e as fotos do Supabase para liberar espaço. A pasta da obra no Google Drive continua.</p></div>
+        <div class="actions"><button class="btn danger" data-a="rdo-obra-x">${icone('lixo')}Apagar obra do sistema</button></div></div></section>
     </div>`;
   }
   function servicosUsados(obraId) {
@@ -1154,13 +1156,146 @@
     const ok = await ui.confirmar({ titulo: 'Desligar os códigos antigos?', msg: 'Quem entrava no portal antigo com o código desta obra deixa de entrar. Os clientes passam a usar o usuário e a senha criados em Acessos.', ok: 'Desligar' });
     if (ok) mudarObra((o) => { o.acessos = {}; });
   };
+  /* ---------- apagar a obra do sistema (fim da obra) ---------- */
+  const fotosDaObra = (o) => diariosDe(o.id).flatMap((d) => (d.fotos || []).map((f) => ({ d, f })));
+  const temDrive = (f) => !!(f.drive && (f.drive.id || f.drive.url));
+  const mb = (b) => (b >= 1048576 ? `${String(Math.round(b / 104857.6) / 10).replace('.', ',')} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  const CHAVE_COPIAS = (id) => 'rdo-apagar-' + id;
+  const lerCopias = (id) => { try { return new Set(JSON.parse(localStorage.getItem(CHAVE_COPIAS(id)) || '[]')); } catch { return new Set(); } };
+  const gravarCopias = (id, set) => { try { localStorage.setItem(CHAVE_COPIAS(id), JSON.stringify([...set])); } catch { /* sem armazenamento */ } };
+  /** PDF com todos os diários da obra, em ordem de data. */
+  function pdfTodos(o) {
+    const ds = diariosDe(o.id);
+    if (!ds.length) { ui.toast('Esta obra não tem diários.'); return; }
+    const aps = aprovacoesDe(o.id);
+    const html = ds.map((d, i) => R.diarioHTML({ obra: o, diario: d, diarios: ds, aprovacoes: aps, empresa: cfgRdo().empresa, logoSouza: logoSouza(), fotoSrc: (f) => B.fotos.src(f), quebra: i > 0 })).join('');
+    imprimir(html, { titulo: `${o.contrato ? o.contrato + ' - ' : ''}${o.nome} - Diários de obra (todos)`, rodape: `${cfgRdo().empresa.nome} · ${o.nome}` });
+  }
+  /** Arquivo .json com tudo o que foi digitado na obra (não inclui as imagens, que estão no Drive). */
+  function baixarDados(o) {
+    const r = B.store.get('obras', o.id);
+    const dados = {
+      sistema: 'Souza Engenharia · Diário de obra', versao: Sis.VERSAO, exportadoEm: new Date().toISOString(),
+      empresa: cfgRdo().empresa, obra: Object.assign({ id: o.id }, (r && r.dados) || {}),
+      diarios: diariosDe(o.id).map((d) => Object.assign({}, d)),
+    };
+    const blob = new Blob([JSON.stringify(dados, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = B.nomePasta(`${o.contrato ? o.contrato + ' - ' : ''}${o.nome} - dados do Diario de obra`) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    ui.toast('Arquivo com os dados da obra baixado.');
+  }
+  /** Apaga de verdade: garante as fotos no Drive, apaga os arquivos do Storage e depois os dados do banco. */
+  async function apagarObra(o, passo) {
+    const lista = R.servicos(o);
+    // 1. sem alterações presas no aparelho (ex.: a situação "Concluída" que acabou de mudar)
+    for (let i = 0; i < 20 && (B.pendentes() || B.ocupado()); i++) { passo('Enviando as últimas alterações…'); await B.sync.agora(); await new Promise((r) => setTimeout(r, 400)); }
+    // 2. foto sem a original no Drive: a cópia do sistema vai para o Drive antes
+    const copias = lerCopias(o.id);
+    const falta = fotosDaObra(o).filter(({ f }) => !temDrive(f) && f.path && !copias.has(f.id));
+    let perdidas = 0;
+    for (let i = 0; i < falta.length; i++) {
+      const { d, f } = falta[i];
+      passo(`Guardando no Drive as fotos sem original (${i + 1} de ${falta.length})…`);
+      const res = await fetch(B.urlPublica(f.path), { cache: 'no-store' });
+      if (res.status === 404 || res.status === 400) { perdidas++; copias.add(f.id); gravarCopias(o.id, copias); continue; }
+      if (!res.ok) throw new Error(`Não foi possível ler a foto do RDO nº ${d.numero} (erro ${res.status}).`);
+      const blob = await res.blob();
+      const sv = lista.find((x) => x.id === f.servicoId);
+      const seq = (d.fotos || []).indexOf(f) + 1;
+      await B.ponte({
+        acao: 'foto',
+        obra: B.nomePasta(`${o.contrato ? o.contrato + ' - ' : ''}${o.nome || 'Obra'}`),
+        dia: B.nomePasta(`${d.data} - RDO nº ${B.p3(d.numero)}`),
+        nome: B.nomePasta(`RDO ${B.p3(d.numero)} - ${sv ? `${sv.num ? sv.num + ' ' : ''}${sv.desc}` : 'Geral da obra'} - ${String(seq).padStart(2, '0')} (${f.id.slice(0, 6)}) - copia do sistema`) + '.jpg',
+        tipo: 'image/jpeg',
+        base64: await B.blobBase64(blob),
+      });
+      copias.add(f.id); gravarCopias(o.id, copias);
+    }
+    // 3. arquivos do Storage (fotos e logo do cliente)
+    passo('Conferindo os arquivos no Supabase…');
+    const achados = [...(await B.listarArquivos(o.id)), ...(await B.listarArquivos(`obras/${o.id}`))];
+    const caminhos = new Set(achados.map((x) => x.path));
+    fotosDaObra(o).forEach(({ f }) => { if (f.path) caminhos.add(f.path); });
+    if (o.logoCliente && o.logoCliente.path) caminhos.add(o.logoCliente.path);
+    const todos = [...caminhos];
+    const bytes = achados.reduce((s, x) => s + x.size, 0);
+    for (let i = 0; i < todos.length; i += 100) {
+      passo(`Apagando as fotos do Supabase (${Math.min(i + 100, todos.length)} de ${todos.length})…`);
+      await B.apagarArquivos(todos.slice(i, i + 100));
+    }
+    // 4. os dados no banco
+    passo('Apagando os diários…');
+    const r = await B.rpc('rdo_obra_apagar', { p_obra: o.id });
+    await B.store.purgarObra(o.id, { obra: true });
+    try { localStorage.removeItem(CHAVE_COPIAS(o.id)); } catch { /* ignora */ }
+    return { diarios: (r && r.diarios) || 0, arquivos: todos.length, bytes, perdidas, copiadas: falta.length - perdidas };
+  }
   A['rdo-obra-x'] = async () => {
-    const o = obraAberta(); if (!o) return;
-    const n = diariosDe(o.id).length;
-    if (n) { ui.alerta({ titulo: 'Obra com diários', msg: `Esta obra tem ${n} ${n === 1 ? 'diário' : 'diários'}. Para tirá-la da lista, mude a situação para "Concluída". Para excluir, apague os diários antes.` }); return; }
-    if (!(await ui.confirmar({ titulo: 'Excluir obra?', msg: `A obra "${o.nome}" será excluída.`, ok: 'Excluir', perigo: true }))) return;
-    B.store.excluir('obras', o.id);
-    location.hash = '#/rdo';
+    const o = obraAberta(); if (!o || !ehMaster()) return;
+    const ds = diariosDe(o.id);
+    if (ds.length && o.situacao !== 'concluida') { ui.alerta({ titulo: 'Marque a obra como concluída', msg: 'Para apagar uma obra com diários, mude antes a situação para "Concluída" em Dados da obra.' }); return; }
+    if (!navigator.onLine) { ui.toast('Para apagar a obra é preciso internet.'); return; }
+    const naFila = B.fotos.daObra(o.id).length;
+    if (naFila) { ui.alerta({ titulo: 'Ainda há fotos subindo', msg: `${naFila} ${naFila === 1 ? 'foto desta obra ainda está subindo' : 'fotos desta obra ainda estão subindo'} deste aparelho. Deixe terminar (bolinha verde) e tente de novo.` }); return; }
+    const fts = fotosDaObra(o);
+    const semDrive = fts.filter(({ f }) => !temDrive(f)).length;
+    const cfg = cfgRdo();
+    if (semDrive && !cfg.ponte.url) { ui.alerta({ titulo: 'Configure a ponte do Drive', msg: `${semDrive} ${semDrive === 1 ? 'foto não tem' : 'fotos não têm'} a original no Drive. Configure a ponte do Google Drive nas Configurações para guardar essas fotos antes de apagar.` }); return; }
+    const aprov = ds.filter((d) => d.status === 'aprovado').length, nao = ds.length - aprov;
+    const chave = (o.contrato || o.nome || '').trim();
+    const item = (cls, ic, html) => `<li class="${cls}">${icone(ic)}<span>${html}</span></li>`;
+    ui.abrirModal({
+      titulo: `Apagar ${o.nome}?`,
+      sub: 'Libera o espaço da obra no Supabase. Não tem como desfazer.',
+      corpo: `<ul class="r-apg-l">
+          ${item(nao ? 'aviso' : 'ok', nao ? 'info' : 'aprovar', `<b>${ds.length} ${ds.length === 1 ? 'diário' : 'diários'}</b>${ds.length ? ` (${aprov} ${aprov === 1 ? 'aprovado' : 'aprovados'}${nao ? `; <b>${nao} sem aprovação</b>, que somem junto` : ''})` : ''}`)}
+          ${item(semDrive ? 'aviso' : 'ok', semDrive ? 'info' : 'aprovar', `<b>${fts.length} ${fts.length === 1 ? 'foto' : 'fotos'}</b>${fts.length ? (semDrive ? `: ${semDrive} sem a original no Drive. A cópia do sistema vai para o Drive antes de apagar, para nenhuma se perder.` : ', todas com a original no Drive.') : ''}`)}
+          ${item('', 'nuvem', '<span data-q="espaco">Calculando o espaço que vai liberar…</span>')}
+          ${item('', 'galeria', `A pasta da obra no Google Drive não é tocada${o.drivePasta ? ` (<a href="${esc(o.drivePasta)}" target="_blank" rel="noopener">abrir</a>)` : ''}.`)}
+          ${item('', 'chave', 'Quem tem acesso a esta obra (engenharia e clientes) deixa de ver na hora.')}
+        </ul>
+        <div class="r-apg-b"><b>Antes de apagar</b><small>Salve o PDF de todos os diários e, se quiser, os dados digitados. Vale mandar o PDF final para o cliente.</small>
+          <div class="actions"><button class="btn" type="button" data-q="pdf">${icone('imprimir')}PDF de todos os diários</button><button class="btn" type="button" data-q="json">${icone('baixar')}Baixar os dados (.json)</button></div></div>
+        <label class="f"><span>Para confirmar, digite <b>${esc(chave)}</b></span><input class="inp" name="conf" autocomplete="off" spellcheck="false"></label>
+        <p class="r-apg-prog" data-q="prog" hidden></p>`,
+      aoAbrir: (el) => {
+        const conf = $('[name=conf]', el);
+        const bt = () => el.closest('.modal').querySelector('.mf .danger');
+        const confere = () => { if (bt()) bt().disabled = norm(conf.value.trim()) !== norm(chave); };
+        setTimeout(confere, 0);
+        conf.addEventListener('input', confere);
+        $('[data-q=pdf]', el).addEventListener('click', () => pdfTodos(o));
+        $('[data-q=json]', el).addEventListener('click', () => baixarDados(o));
+        Promise.all([B.listarArquivos(o.id), B.listarArquivos(`obras/${o.id}`)])
+          .then(([a, b]) => { const t = [...a, ...b]; const x = $('[data-q=espaco]', el); if (x) x.textContent = t.length ? `Libera cerca de ${mb(t.reduce((s, y) => s + y.size, 0))} no Supabase (${t.length} ${t.length === 1 ? 'arquivo' : 'arquivos'}).` : 'Nenhum arquivo desta obra no Supabase.'; })
+          .catch(() => { const x = $('[data-q=espaco]', el); if (x) x.textContent = 'Os arquivos da obra no Supabase também serão apagados.'; });
+      },
+      botoes: [{ rot: 'Cancelar' }, {
+        rot: 'Apagar definitivamente', classe: 'danger', acao: async (m) => {
+          const conf = $('[name=conf]', m.el);
+          if (norm(conf.value.trim()) !== norm(chave)) { conf.classList.add('erro'); return; }
+          const prog = $('[data-q=prog]', m.el);
+          const bts = [...m.el.querySelectorAll('.mf .btn, .r-apg-b .btn')];
+          bts.forEach((b) => { b.disabled = true; });
+          prog.hidden = false; prog.classList.remove('erro');
+          try {
+            const r = await apagarObra(o, (t) => { prog.textContent = t; });
+            m.fechar();
+            ui.alerta({ titulo: 'Obra apagada', msg: `${o.nome} saiu do sistema: ${r.diarios} ${r.diarios === 1 ? 'diário' : 'diários'} e ${r.arquivos} ${r.arquivos === 1 ? 'arquivo' : 'arquivos'}${r.bytes ? ` (${mb(r.bytes)})` : ''}.${r.copiadas ? `\n${r.copiadas} ${r.copiadas === 1 ? 'foto sem original foi guardada' : 'fotos sem original foram guardadas'} no Drive antes.` : ''}${r.perdidas ? `\n${r.perdidas} ${r.perdidas === 1 ? 'foto já não estava' : 'fotos já não estavam'} no Supabase e não puderam ser copiadas.` : ''}\nA pasta da obra no Google Drive continua.` });
+            location.hash = '#/rdo';
+            Sis.desenhar(true);
+          } catch (e) {
+            prog.textContent = `Parou no meio: ${e.message} Nada se perdeu: tente de novo, o sistema continua de onde parou.`;
+            prog.classList.add('erro');
+            bts.forEach((b) => { b.disabled = false; });
+          }
+        },
+      }],
+    });
   };
 
   /* importar serviços de um orçamento ou colar do Excel */
