@@ -1485,3 +1485,12 @@ body.portal{background:var(--bg)}
 .r-apg-b .actions{gap:8px;flex-wrap:wrap}
 .r-apg-prog{margin:12px 0 0;font-size:13px;color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 12px}
 .r-apg-prog.erro{background:#FBEAEA;color:#8A1F2B}
+
+/* ---------- Diário de obra: anterior e próximo no editor ---------- */
+.r-ed-nav{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:10px;padding:2px;margin-right:4px}
+.r-ed-nav .btn.icon{border:0;background:transparent;padding:6px}
+.r-ed-nav .btn.icon:hover:not(:disabled){background:var(--surface-2)}
+.r-ed-nav .btn.icon:disabled{opacity:.3}
+.r-ed-nav small{font-size:12px;color:var(--muted);min-width:48px;text-align:center;font-variant-numeric:tabular-nums}
+@media (max-width:899px){.r-ed-topo .actions>.r-ed-nav{order:-1}}
+@media (max-width:480px){.r-ed-nav small{min-width:0;padding:0 2px}.r-ed-topo .actions{gap:6px;padding-left:0}.r-ed-nav .btn.icon{padding:5px}.r-ed-nav{margin-right:0}}

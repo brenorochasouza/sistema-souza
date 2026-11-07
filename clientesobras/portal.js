@@ -15,7 +15,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = '../img/logo.png?v=1.4.1';
+  const LOGO = '../img/logo.png?v=1.4.2';
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 

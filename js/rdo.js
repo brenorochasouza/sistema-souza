@@ -433,9 +433,15 @@
     normalizarObra(o);
     const aprovado = d.status === 'aprovado';
     const pode = editavel(d);
+    // anterior e próximo da mesma obra, sem voltar para a lista
+    const seq = diariosDe(o.id), pos = seq.findIndex((x) => x.id === d.id);
+    const ir = (x, dir) => (x
+      ? `<a class="btn icon" href="#/rdo/${esc(o.id)}/d/${esc(x.id)}" data-nav-rdo="${dir}" title="${dir === 'ant' ? 'Diário anterior' : 'Próximo diário'}: nº ${esc(x.numero)}, ${dataBR(x.data)}" aria-label="${dir === 'ant' ? 'Diário anterior' : 'Próximo diário'}">${icone(dir === 'ant' ? 'esq' : 'dir')}</a>`
+      : `<button class="btn icon" disabled aria-label="${dir === 'ant' ? 'Este é o primeiro diário' : 'Este é o último diário'}">${icone(dir === 'ant' ? 'esq' : 'dir')}</button>`);
+    const nav = seq.length > 1 ? `<span class="r-ed-nav">${ir(seq[pos - 1], 'ant')}<small>${pos + 1} de ${seq.length}</small>${ir(seq[pos + 1], 'prox')}</span>` : '';
     const topo = `<div class="ob-topo r-ed-topo"><a class="btn icon" href="#/rdo/${esc(o.id)}" aria-label="Voltar para a obra">${icone('esq')}</a>
       <div class="tit"><b>RDO nº ${esc(d.numero)}</b><span>${R.diaSemana(d.data)}, ${dataBR(d.data)} · ${esc(o.nome)}</span></div>
-      <div class="actions">${chipSt(d)}${pode ? '<span class="o-salvo ok" id="rdo-salvo">Salvo</span>' : ''}
+      <div class="actions">${nav}${chipSt(d)}${pode ? '<span class="o-salvo ok" id="rdo-salvo">Salvo</span>' : ''}
         ${d.drivePasta ? `<a class="btn icon" href="${esc(d.drivePasta)}" target="_blank" rel="noopener" title="Fotos em alta qualidade no Drive" aria-label="Fotos em alta qualidade">${icone('galeria')}</a>` : ''}
         <button class="btn icon" data-a="rdo-imprimir-diario" title="Imprimir ou salvar PDF" aria-label="Imprimir ou salvar PDF">${icone('imprimir')}</button>
         <button class="btn icon" data-a="rdo-diario-mais" aria-label="Mais opções">${icone('pontos')}</button></div></div>`;
