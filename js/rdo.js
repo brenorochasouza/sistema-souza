@@ -350,7 +350,7 @@
       titulo: 'Novo diário', sub: esc(o.nome),
       corpo: `<label class="f"><span>Data do diário</span><input class="inp" type="date" name="data" value="${hojeISO()}"></label>
         <p class="small aviso-campo" data-q="existe" hidden></p>
-        ${ult ? `<label class="chk"><input type="checkbox" name="copiar" checked> <span>Copiar do diário nº ${esc(ult.numero)} (${dataBR(ult.data)}): clima, mão de obra, equipamentos e atividades. Fotos, ocorrências e assinaturas não são copiadas.</span></label>` : ''}`,
+        ${ult ? `<label class="chk"><input type="checkbox" name="copiar" checked> <span>Copiar do diário nº ${esc(ult.numero)} (${dataBR(ult.data)}): clima, mão de obra, equipamentos e as atividades que ainda não foram concluídas. Fotos, ocorrências e assinaturas não são copiadas.</span></label>` : ''}`,
       aoAbrir: (m) => {
         const inp = $('[name=data]', m), av = $('[data-q=existe]', m);
         const ver = () => { const ex = ds.find((d) => d.data === inp.value); av.hidden = !ex; if (ex) av.textContent = `Já existe o diário nº ${ex.numero} nesta data. Você pode criar outro mesmo assim.`; };
@@ -361,17 +361,23 @@
           const data = $('[name=data]', m.el).value;
           if (!data) { ui.toast('Informe a data.'); return; }
           const cp = $('[name=copiar]', m.el) && $('[name=copiar]', m.el).checked ? ult : null;
+          // atividade concluída (100% nela ou no serviço até esta data) não passa para o próximo diário
+          const avanco = cp ? R.progresso(o, ds, { ate: data }).por : null;
+          const cheio = (v) => v !== null && v !== undefined && v !== '' && Number(v) >= 100;
+          const concluida = (a) => cheio(a.pct) || !!(a.servicoId && avanco && avanco.has(a.servicoId) && avanco.get(a.servicoId).pct >= 100);
+          const deixadas = cp ? (cp.atividades || []).filter(concluida).length : 0;
           const d = {
             id: uid(), obraId: o.id, numero: ds.reduce((mx, x) => Math.max(mx, Number(x.numero) || 0), 0) + 1, data, status: 'rascunho',
             clima: cp && cp.clima ? copia(cp.clima) : { manha: { tempo: '', cond: '' }, tarde: { tempo: '', cond: '' }, chuvaMm: null },
             mao: cp ? copia(cp.mao || {}) : {}, equip: cp ? copia(cp.equip || {}) : {},
-            atividades: cp ? copia(cp.atividades || []).map((a) => Object.assign(a, { id: rid() })) : [],
+            atividades: cp ? copia(cp.atividades || []).filter((a) => !concluida(a)).map((a) => Object.assign(a, { id: rid() })) : [],
             ocorrencias: [], fotos: [], obs: '', criadoEm: new Date().toISOString(),
             criadoPor: (({ uid: u, nome }) => ({ uid: u, nome }))(euMesmo()),
           };
           gravarDiario(d);
           m.fechar();
           location.hash = `#/rdo/${o.id}/d/${d.id}`;
+          if (deixadas) ui.toast(`${deixadas} ${deixadas === 1 ? 'atividade concluída não foi copiada' : 'atividades concluídas não foram copiadas'}.`);
         },
       }],
     });
