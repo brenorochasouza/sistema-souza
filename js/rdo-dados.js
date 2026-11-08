@@ -7,7 +7,7 @@
    Tudo funciona sem internet e sobe quando a conexão volta.
    ========================================================= */
 window.RDOB = (function () {
-  const TAB = ['obras', 'diarios', 'aprovacoes'];
+  const TAB = ['obras', 'diarios', 'aprovacoes', 'portal'];
   const BUCKET = 'rdo-fotos';
   const ID_CONFIG = 'config';
 

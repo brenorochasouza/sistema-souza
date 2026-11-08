@@ -75,6 +75,11 @@
   /** Caminho até a raiz do sistema (a entrada /rdo fica uma pasta abaixo). */
   const RAIZ = window.SOUZA_RAIZ || '';
   const urlEntrada = () => new URL(RAIZ + 'rdo/', location.href).href;
+  /** Endereço onde os clientes entram (área do cliente). */
+  const URL_CLIENTES = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portalClientes) || 'https://clientes.souzaengenharia.com/';
+  const urlDe = (perfil) => (perfil === 'cliente' ? URL_CLIENTES : urlEntrada());
+  const clientesArea = () => B.store.dados('portal', 'cliente').sort((x, y) => (Number(y.numero) || 0) - (Number(x.numero) || 0));
+  const nomeClienteArea = (id) => { const c = clientesArea().find((x) => x.id === id); return c ? `${c.numero ? c.numero + '. ' : ''}${c.nome}` : 'Cliente excluído'; };
   const logoSouza = () => `${RAIZ}img/logo.png?v=${Sis.VERSAO}`;
   /* perfis: master (você), engenharia (cria e edita diários) e cliente (só vê os aprovados, pela tela do portal) */
   const ehMaster = () => B.perfil() === 'master';
@@ -1664,7 +1669,7 @@
   const ACS = { lista: null, erro: '', carregando: false };
   const PERFIS = [
     ['engenharia', 'Engenharia', 'Cria e preenche os diários e envia para a sua aprovação, com a assinatura dele. Não aprova, não reabre e não mexe no cadastro da obra.'],
-    ['cliente', 'Cliente', 'Só vê os diários aprovados, as fotos e o avanço das obras liberadas. Não assina nem cria nada.'],
+    ['cliente', 'Cliente', 'Entra na área do cliente e vê os serviços, os documentos e as obras liberadas (só os diários aprovados). Não assina nem cria nada.'],
   ];
   const nomePerfil = (k) => (PERFIS.find((x) => x[0] === k) || [k, k])[1];
   async function carregarAcessos() {
@@ -1684,7 +1689,7 @@
         <div class="r-ac-t"><b>${esc(a.nome)}</b><small>${esc([a.funcao, a.registro].filter(Boolean).join(' · ') || nomePerfil(a.perfil))}</small>
           <small>Usuário <code>${esc(a.usuario)}</code></small></div>
         <span class="chip ${situacao(a)[1]}">${esc(situacao(a)[0])}</span></div>
-      <div class="r-ac-o">${(a.obras || []).length ? a.obras.map((id) => `<span class="chip neutro">${esc(nomeObra(id))}</span>`).join('') : '<span class="small muted">Nenhuma obra liberada</span>'}</div>
+      <div class="r-ac-o">${(a.clientes || []).map((id) => `<span class="chip previsto">${icone('pasta')}${esc(nomeClienteArea(id))}</span>`).join('')}${(a.obras || []).map((id) => `<span class="chip neutro">${esc(nomeObra(id))}</span>`).join('')}${!(a.obras || []).length && !(a.clientes || []).length ? `<span class="small muted">${a.perfil === 'cliente' ? 'Nenhum cliente liberado' : 'Nenhuma obra liberada'}</span>` : ''}</div>
       <div class="actions"><button class="btn sm" data-a="rdo-ac-editar" data-id="${esc(a.id)}">${icone('editar')}Editar</button><button class="btn sm" data-a="rdo-ac-codigo" data-id="${esc(a.id)}">${icone('chave')}${a.ativado ? 'Novo código' : 'Criar login'}</button>
         <button class="btn sm ghost" data-a="rdo-ac-ativo" data-id="${esc(a.id)}">${a.ativo ? 'Desativar' : 'Reativar'}</button></div></div>`;
     const grupo = (k, tit, txt) => { const l = lista.filter((a) => a.perfil === k); return `<section class="r-ac-g"><div class="r-ac-gh"><h3>${tit} <span class="r-cont">${l.length}</span></h3><p class="small muted">${txt}</p></div>
@@ -1701,10 +1706,11 @@
     const p = norm(nome).replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
     return (p.length > 1 ? p[0] + '.' + p[p.length - 1] : p[0] || '').slice(0, 30);
   };
-  function modalAcesso(a) {
+  function modalAcesso(a, pre) {
     const novo = !a;
-    a = a || { nome: '', funcao: '', registro: '', usuario: '', perfil: 'engenharia', obras: [], ativo: true };
+    a = a || Object.assign({ nome: '', funcao: '', registro: '', usuario: '', perfil: 'engenharia', obras: [], clientes: [], ativo: true }, pre || {});
     const todas = obras();
+    const clis = clientesArea();
     let usuarioMexido = !novo;
     ui.abrirModal({
       titulo: novo ? 'Novo acesso' : `Editar o acesso de ${a.nome}`,
@@ -1716,10 +1722,11 @@
         ${novo ? `<label class="f req span2"><span>Usuário (para entrar)</span><input class="inp" name="usuario" value="" autocapitalize="off" spellcheck="false" placeholder="Ex.: matheus.villanova"><small class="muted">Letras minúsculas, números e ponto, sem espaço. Não dá para mudar depois.</small></label>` : ''}
       </div>
       <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)">Tipo de acesso</span><div class="r-perfis">${PERFIS.map(([k, n, t]) => `<label class="r-perfil"><input type="radio" name="perfil" value="${k}" ${a.perfil === k ? 'checked' : ''}><span><b>${n}</b><small>${t}</small></span></label>`).join('')}</div></div>
-      <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)">Obras liberadas</span>${todas.length ? `<div class="r-ac-obras">${todas.map((o) => `<label class="chk"><input type="checkbox" name="obra" value="${esc(o.id)}" ${(a.obras || []).includes(o.id) ? 'checked' : ''}> <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.situacao === 'concluida' ? ' <small class="muted">(concluída)</small>' : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra cadastrada ainda.</p>'}</div>`,
+      <div class="f" data-q="clis"><span class="small" style="font-weight:500;color:var(--ink-2)">Clientes liberados (área do cliente)</span>${clis.length ? `<div class="r-ac-obras">${clis.map((c) => `<label class="chk"><input type="checkbox" name="cli" value="${esc(c.id)}" ${(a.clientes || []).includes(c.id) ? 'checked' : ''}> <span>${esc(`${c.numero ? c.numero + '. ' : ''}${c.nome}`)}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhum cliente na área do cliente ainda.</p>'}<small class="muted">A pessoa vê os serviços, os documentos e as obras ligadas a estes clientes.</small></div>
+      <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)" data-q="obras-rot">Obras liberadas</span>${todas.length ? `<div class="r-ac-obras">${todas.map((o) => `<label class="chk"><input type="checkbox" name="obra" value="${esc(o.id)}" ${(a.obras || []).includes(o.id) ? 'checked' : ''}> <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.situacao === 'concluida' ? ' <small class="muted">(concluída)</small>' : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra cadastrada ainda.</p>'}</div>`,
       aoAbrir: (m) => {
         const nome = $('[name=nome]', m), us = $('[name=usuario]', m), reg = $('[data-q=reg]', m);
-        const verPerfil = () => { const p = ($('[name=perfil]:checked', m) || {}).value; reg.hidden = p !== 'engenharia'; };
+        const verPerfil = () => { const p = ($('[name=perfil]:checked', m) || {}).value; reg.hidden = p !== 'engenharia'; $('[data-q=clis]', m).hidden = p !== 'cliente'; $('[data-q=obras-rot]', m).textContent = p === 'cliente' ? 'Outras obras liberadas (avulsas)' : 'Obras liberadas'; };
         $$('[name=perfil]', m).forEach((r) => r.addEventListener('change', verPerfil)); verPerfil();
         if (us) {
           nome.addEventListener('input', () => { if (!usuarioMexido) us.value = sugerirUsuario(nome.value); });
@@ -1737,7 +1744,7 @@
         { rot: novo ? 'Criar acesso' : 'Salvar', classe: 'primary', acao: async (m) => {
           const v = (n) => ($(`[name=${n}]`, m.el) ? $(`[name=${n}]`, m.el).value.trim() : '');
           const perfil = ($('[name=perfil]:checked', m.el) || {}).value;
-          const dados = { id: a.id || null, nome: v('nome'), funcao: v('funcao'), registro: perfil === 'engenharia' ? v('registro') : '', perfil, obras: $$('[name=obra]:checked', m.el).map((x) => x.value), ativo: a.ativo };
+          const dados = { id: a.id || null, nome: v('nome'), funcao: v('funcao'), registro: perfil === 'engenharia' ? v('registro') : '', perfil, obras: $$('[name=obra]:checked', m.el).map((x) => x.value), clientes: perfil === 'cliente' ? $$('[name=cli]:checked', m.el).map((x) => x.value) : [], ativo: a.ativo };
           if (novo) dados.usuario = v('usuario');
           if (!dados.nome) { $('[name=nome]', m.el).classList.add('erro'); return; }
           if (novo && !dados.usuario) { $('[name=usuario]', m.el).classList.add('erro'); return; }
@@ -1764,10 +1771,10 @@
   }
   /** Mostra o código de acesso uma única vez, com a mensagem pronta para o WhatsApp. */
   function mostrarCodigo(a, cod, novo) {
-    const txt = `Olá, ${String(a.nome).split(/\s+/)[0]}! ${novo ? 'Seu acesso' : 'Seu novo código de acesso'} ao Diário de obra da Souza Engenharia:\n${urlEntrada()}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\n${a.perfil === 'engenharia' ? 'No primeiro acesso, troque o código por uma senha sua em "Minha conta" e envie a imagem da sua assinatura.' : 'Depois de entrar, você pode trocar o código por uma senha sua.'}`;
+    const txt = `Olá, ${String(a.nome).split(/\s+/)[0]}! ${novo ? 'Seu acesso' : 'Seu novo código de acesso'} ${a.perfil === 'cliente' ? 'à Área do cliente' : 'ao Diário de obra'} da Souza Engenharia:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\n${a.perfil === 'engenharia' ? 'No primeiro acesso, troque o código por uma senha sua em "Minha conta" e envie a imagem da sua assinatura.' : 'Depois de entrar, você pode trocar o código por uma senha sua.'}`;
     ui.abrirModal({
       titulo: novo ? 'Acesso criado' : 'Novo código gerado', sub: `Mande para ${esc(a.nome)}. ${novo ? '' : 'O código anterior já não funciona. '}Este código não aparece de novo: se perder, gere outro.`,
-      corpo: `<div class="r-codbox"><div><span>Endereço</span><b>${esc(urlEntrada().replace(/^https?:\/\//, ''))}</b></div><div><span>Usuário</span><b>${esc(a.usuario)}</b></div><div><span>Código de acesso</span><b class="r-cod-v" data-q="cod">${esc(cod)}</b></div></div>`,
+      corpo: `<div class="r-codbox"><div><span>Endereço</span><b>${esc(urlDe(a.perfil).replace(/^https?:\/\//, '').replace(/\/$/, ''))}</b></div><div><span>Usuário</span><b>${esc(a.usuario)}</b></div><div><span>Código de acesso</span><b class="r-cod-v" data-q="cod">${esc(cod)}</b></div></div>`,
       botoes: [{ rot: 'Fechar' }, { rot: 'Copiar mensagem', classe: 'primary', acao: async () => {
         try { await navigator.clipboard.writeText(txt); ui.toast('Mensagem copiada. É só colar no WhatsApp.'); }
         catch { ui.alerta({ titulo: 'Mensagem', msg: txt }); }
@@ -1775,7 +1782,9 @@
     });
   }
   const acessoPor = (id) => (ACS.lista || []).find((x) => x.id === id);
-  A['rdo-ac-novo'] = () => { if (!obras().length) { ui.toast('Cadastre uma obra antes de criar acessos.'); return; } modalAcesso(null); };
+  /** Para a área do cliente abrir "Novo acesso" já com o cliente marcado. */
+  window.RdoAcessos = { novo: (pre) => modalAcesso(null, pre) };
+  A['rdo-ac-novo'] = () => { if (!obras().length && !clientesArea().length) { ui.toast('Cadastre uma obra ou um cliente na área do cliente antes de criar acessos.'); return; } modalAcesso(null); };
   A['rdo-ac-editar'] = (b) => { const a = acessoPor(b.dataset.id); if (a) modalAcesso(a); };
   A['rdo-ac-ativo'] = async (b) => {
     const a = acessoPor(b.dataset.id); if (!a) return;

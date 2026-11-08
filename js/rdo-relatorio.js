@@ -32,6 +32,66 @@ window.RDO = (function () {
   /** Situação do diário: rascunho, aguardando aprovação (enviado pela engenharia) ou aprovado. */
   const STATUS = { rascunho: ['Rascunho', 'neutro'], revisao: ['Aguardando aprovação', 'atencao'], aprovado: ['Aprovado', 'ok'] };
   const statusDe = (d) => STATUS[d && d.status] || STATUS.rascunho;
+  /* Área do cliente: tipos de serviço, ofertas e vencimentos (tudo aqui no código, nada no banco) */
+  const WHATSAPP = '5571997237168';
+  const TIPOS_SERVICO = [
+    ['atc', 'Assessoria Técnica Condominial (ATC)', 0],
+    ['inspecao_predial', 'Laudo de inspeção predial', 0],
+    ['fachada', 'Inspeção de fachadas', 0],
+    ['spda', 'Laudo de SPDA', 1],
+    ['avcb', 'Projeto e AVCB', 0],
+    ['carro_eletrico', 'Laudo para carregador de carro elétrico', 0],
+    ['impermeabilizacao', 'Obra de impermeabilização', 0],
+    ['fiscalizacao', 'Fiscalização de obra', 0],
+    ['pericia', 'Perícia', 0],
+    ['outro', 'Outro serviço', 0],
+  ];
+  const nomeTipo = (k) => (TIPOS_SERVICO.find((t) => t[0] === k) || [k, 'Serviço'])[1];
+  const OFERTAS = [
+    { tipo: 'atc', titulo: 'Assessoria Técnica Condominial (ATC)', texto: 'Acompanhamento técnico contínuo do condomínio por engenheiro: orientação na manutenção e nas obras, inspeção anual das fachadas com drone e 25% de desconto nos laudos com ART.' },
+    { tipo: 'inspecao_predial', titulo: 'Laudo de inspeção predial', texto: 'Avaliação completa do estado de conservação do condomínio, com as prioridades de manutenção e as recomendações técnicas.' },
+    { tipo: 'fachada', titulo: 'Inspeção de fachadas', texto: 'Mapeamento das anomalias das fachadas, com registro fotográfico, causas prováveis e plano de recuperação.' },
+    { tipo: 'spda', titulo: 'Laudo de SPDA', texto: 'Inspeção do sistema de proteção contra descargas atmosféricas, com medições e ART.' },
+    { tipo: 'avcb', titulo: 'Projeto e AVCB', texto: 'Projeto de prevenção e combate a incêndio e acompanhamento até a emissão do AVCB pelo Corpo de Bombeiros.' },
+    { tipo: 'impermeabilizacao', titulo: 'Obras de impermeabilização', texto: 'Diagnóstico, projeto e execução de impermeabilização de coberturas, piscinas, playgrounds e áreas molhadas.' },
+    { tipo: 'carro_eletrico', titulo: 'Laudo para carregador de carro elétrico', texto: 'Avaliação da instalação elétrica do condomínio para receber carregadores de carro elétrico com segurança.' },
+    { tipo: 'fiscalizacao', titulo: 'Fiscalização de obras', texto: 'Acompanhamento técnico das obras contratadas pelo condomínio, com relatórios e diário de obra.' },
+  ];
+  /** Data em que o serviço precisa ser renovado (data de entrega + anos de validade). */
+  function vencimento(s) {
+    const anos = Number(s && s.renovaAnos);
+    if (!s || !s.data || !anos) return '';
+    const [y, m, d] = String(s.data).split('-').map(Number);
+    if (!y || !m || !d) return '';
+    const dt = new Date(Date.UTC(y + anos, m - 1, d));
+    return dt.toISOString().slice(0, 10);
+  }
+  /** Situação do vencimento: vencido, perto (até 120 dias) ou em dia. */
+  function situacaoVenc(data, hoje) {
+    if (!data) return null;
+    const dias = Math.round((Date.parse(data) - Date.parse(hoje || isoData(new Date()))) / 86400000);
+    return { dias, estado: dias < 0 ? 'vencido' : dias <= 120 ? 'perto' : 'emdia' };
+  }
+  const linkWhats = (txt) => `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(txt)}`;
+  /**
+   * Link do Google Drive: arquivo, pasta ou documento Google.
+   * Devolve como mostrar dentro do portal (preview), abrir no Drive e baixar.
+   */
+  function drive(url) {
+    const u = String(url || '').trim();
+    let m = u.match(/\/folders\/([\w-]{10,})/) || u.match(/embeddedfolderview\?id=([\w-]{10,})/);
+    if (m) return { tipo: 'pasta', id: m[1], preview: `https://drive.google.com/embeddedfolderview?id=${m[1]}#list`, abrir: `https://drive.google.com/drive/folders/${m[1]}`, baixar: '' };
+    m = u.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([\w-]{10,})/);
+    if (m) {
+      const [, t, id] = m;
+      const base = `https://docs.google.com/${t}/d/${id}`;
+      return { tipo: 'doc', sub: t, id, preview: `${base}/preview`, abrir: `${base}/view`, baixar: t === 'spreadsheets' ? `${base}/export?format=xlsx` : t === 'presentation' ? `${base}/export/pdf` : `${base}/export?format=pdf` };
+    }
+    m = u.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) || (/drive\.google\.com|docs\.google\.com/.test(u) && u.match(/[?&]id=([\w-]{10,})/));
+    if (m) return { tipo: 'arquivo', id: m[1], preview: `https://drive.google.com/file/d/${m[1]}/preview`, abrir: `https://drive.google.com/file/d/${m[1]}/view`, baixar: `https://drive.google.com/uc?export=download&id=${m[1]}` };
+    if (/^https?:\/\//i.test(u)) return { tipo: 'link', id: '', preview: '', abrir: u, baixar: '' };
+    return null;
+  }
   const nomeDe = (lista, k) => { const x = lista.find((i) => i[0] === k); return x ? x[1] : ''; };
   const GRUPOS_PADRAO = [
     ['Equipe técnica', ['Engenheiro', 'Assistente de engenharia', 'Mestre de obras', 'Encarregado']],
@@ -274,7 +334,7 @@ window.RDO = (function () {
   return {
     ajustarZoom,
     esc, dataBR, deISO, isoData, somaDias, difDias, diaSemana, dataHora, num, fmtPct, dias,
-    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, GRUPOS_PADRAO, nomeDe, iconeTempo,
+    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, OFERTAS, vencimento, situacaoVenc, linkWhats, GRUPOS_PADRAO, nomeDe, iconeTempo,
     servicos, rotServ, rotEtapa, statusPct, ordemDiario, horas, fmtHoras, horario,
     progresso, prazo, dataRef, choveu, impraticavel, totalMao, aprovacao, impactoTxt, diarioHTML,
   };

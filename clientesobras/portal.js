@@ -2,8 +2,10 @@
 /* =========================================================
    Visão do cliente: diários de obra aprovados (só consulta).
    Dois jeitos de entrar:
-   - /rdo com usuário e senha (Portal.iniciarSessao): funções
-     rdo_cliente_obras e rdo_cliente_obra, uma ou várias obras;
+   - clientes.souzaengenharia.com (ou /rdo) com usuário e senha
+     (Portal.iniciarSessao): área do cliente com os serviços, os
+     documentos do Drive (rdo_area), as obras (rdo_cliente_obras e
+     rdo_cliente_obra), os vencimentos e as ofertas;
    - /clientesobras com o código antigo da obra: portal_entrar.
    O banco só devolve o que é das obras liberadas.
    ========================================================= */
@@ -15,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = '../img/logo.png?v=1.4.3';
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.4`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -28,6 +30,11 @@
     sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
     chave: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
     obras: '<path d="M3 21h18M9 8h1M9 12h1M9 16h1M14 8h1M14 12h1M14 16h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/>',
+    dir: '<path d="m9 6 6 6-6 6"/>',
+    nota: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+    pasta: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    baixar: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+    externo: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   };
 
   function toast(msg, erro) {
@@ -101,44 +108,119 @@
     guardar.set(''); est.dados = null; est.codigo = ''; history.replaceState(null, '', location.pathname); telaEntrada();
   }
 
-  /* ---------------- entrada com usuário e senha (/rdo) ---------------- */
+  /* ---------------- área do cliente (usuário e senha) ---------------- */
+  // Rotas: #/ início · #/c/<cliente> · #/c/<cliente>/doc/<serviço>/<item> · #/o/<obra> · #/o/<obra>/d/<diário>
   const topo = (o) => `<header class="pt-topo"><img src="${LOGO}" alt="Souza Engenharia">${o && o.logoCliente && o.logoCliente.url ? `<img src="${esc(o.logoCliente.url)}" alt="">` : ''}
     <span class="pt-topo-a">${est.sessao ? `<button class="btn ghost sm" data-p="senha">${icone(IC.chave)}<span>Senha</span></button>` : ''}<button class="btn ghost sm" data-p="sair">${icone(IC.sair)}Sair</button></span></header>`;
+  const dec = (x) => decodeURIComponent(x);
+  const enc = (x) => encodeURIComponent(x);
+  const clientesSessao = () => (est.area && est.area.clientes) || [];
+  const clienteSessao = (id) => clientesSessao().find((c) => c.id === id);
+  const obrasDo = (cid) => (est.obras || []).filter((o) => o.cliente === cid);
+  const obrasAvulsas = () => (est.obras || []).filter((o) => !o.cliente || !clienteSessao(o.cliente));
+  const primeiroNome = () => String((est.sessao && est.sessao.nome) || '').split(/\s+/)[0];
   async function iniciarSessao(sessao) {
     est.sessao = sessao;
     $('#app').innerHTML = '<div class="pt-carregando">Carregando…</div>';
-    try { est.obras = (await rpc('rdo_cliente_obras')) || []; }
-    catch (e) { telaErro(e.message); return; }
-    const h = location.hash.match(/^#\/o\/([^/]+)(?:\/d\/(.+))?$/);
-    if (h && est.obras.some((o) => o.id === decodeURIComponent(h[1]))) { await abrirObra(decodeURIComponent(h[1]), h[2] ? decodeURIComponent(h[2]) : null); return; }
-    if (est.obras.length === 1) { await abrirObra(est.obras[0].id); return; }
-    telaObras();
+    try {
+      const [area, obras] = await Promise.all([
+        rpc('rdo_area').catch((e) => { if (/Could not find|does not exist|schema cache|404/i.test(e.message || '')) return { clientes: [] }; throw e; }),
+        rpc('rdo_cliente_obras'),
+      ]);
+      est.area = area || { clientes: [] };
+      est.obras = obras || [];
+    } catch (e) { telaErro(e.message); return; }
+    rota();
+  }
+  async function rota() {
+    const h = location.hash;
+    let m = h.match(/^#\/o\/([^/]+)(?:\/d\/(.+))?$/);
+    if (m) {
+      const id = dec(m[1]);
+      if (!est.dados || est.dados.obra.id !== id) {
+        $('#app').innerHTML = '<div class="pt-carregando">Carregando…</div>';
+        try { est.dados = await rpc('rdo_cliente_obra', { p_obra: id }); est.aba = 'diarios'; }
+        catch (e) { toast(e.message, true); location.hash = '#/'; return; }
+      }
+      est.aberto = m[2] ? dec(m[2]) : null;
+      desenhar();
+      return;
+    }
+    est.dados = null; est.aberto = null;
+    m = h.match(/^#\/c\/([^/]+)\/doc\/([^/]+)\/([^/]+)$/);
+    if (m) { telaDoc(dec(m[1]), dec(m[2]), dec(m[3])); return; }
+    m = h.match(/^#\/c\/([^/]+)$/);
+    if (m && clienteSessao(dec(m[1]))) { telaCliente(dec(m[1])); return; }
+    telaInicio();
+  }
+  /** Para onde volta quem está numa obra: o cliente dela, a lista ou nada. */
+  function voltarDaObra(o) {
+    if (o && o.cliente && clienteSessao(o.cliente)) return { href: '#/c/' + enc(o.cliente), rot: clienteSessao(o.cliente).nome };
+    if (clientesSessao().length + obrasAvulsas().length > 1) return { href: '#/', rot: 'Início' };
+    return null;
   }
   function telaErro(msg) {
-    $('#app').innerHTML = `<div class="pt">${topo()}<div class="card"><div class="empty"><b>Não foi possível abrir as obras</b>${esc(msg)}<div class="actions" style="justify-content:center;margin-top:12px"><button class="btn" data-p="recarregar">Tentar de novo</button></div></div></div></div>`;
+    $('#app').innerHTML = `<div class="pt">${topo()}<div class="card"><div class="empty"><b>Não foi possível abrir a área do cliente</b>${esc(msg)}<div class="actions" style="justify-content:center;margin-top:12px"><button class="btn" data-p="recarregar">Tentar de novo</button></div></div></div></div>`;
   }
-  function telaObras() {
-    est.dados = null; est.aberto = null;
-    const nome = est.sessao.nome || '';
-    const lista = est.obras || [];
+  const cardObra = (o) => `<a class="card r-obra pt-obra" href="#/o/${enc(o.id)}"><div class="r-obra-l">
+      <div class="r-obra-t"><b>${esc(o.nome || 'Obra')}</b>${o.contrato ? `<span class="chip neutro">${esc(o.contrato)}</span>` : ''}</div>
+      <small>${esc([o.contratante, o.local].filter(Boolean).join(' · ') || ' ')}</small>
+      <div class="r-obra-m"><span>${o.diarios} ${Number(o.diarios) === 1 ? 'diário aprovado' : 'diários aprovados'}</span><span>${o.ultimo ? `Último em ${dataBR(o.ultimo)}` : 'Nenhum ainda'}</span></div></div></a>`;
+  function telaInicio() {
+    const cs = clientesSessao(), av = obrasAvulsas();
+    if (cs.length === 1 && !av.length) { history.replaceState(null, '', '#/c/' + enc(cs[0].id)); telaCliente(cs[0].id); return; }
+    if (!cs.length && av.length === 1) { location.replace('#/o/' + enc(av[0].id)); return; }
     $('#app').innerHTML = `<div class="pt">${topo()}
-      <div class="pagehead"><div><h1>Diários de obra</h1><p>${nome ? `Olá, ${esc(nome.split(/\s+/)[0])}. ` : ''}${lista.length ? `${lista.length} ${lista.length === 1 ? 'obra liberada' : 'obras liberadas'} para você.` : ''}</p></div></div>
-      ${lista.length ? `<div class="r-obras">${lista.map((o) => `<a class="card r-obra pt-obra" href="#/o/${encodeURIComponent(o.id)}" data-p="obra" data-id="${esc(o.id)}"><div class="r-obra-l">
-          <div class="r-obra-t"><b>${esc(o.nome || 'Obra')}</b>${o.contrato ? `<span class="chip neutro">${esc(o.contrato)}</span>` : ''}</div>
-          <small>${esc([o.contratante, o.local].filter(Boolean).join(' · ') || ' ')}</small>
-          <div class="r-obra-m"><span>${o.diarios} ${Number(o.diarios) === 1 ? 'diário aprovado' : 'diários aprovados'}</span><span>${o.ultimo ? `Último em ${dataBR(o.ultimo)}` : 'Nenhum ainda'}</span></div></div></a>`).join('')}</div>`
-        : '<div class="card"><div class="empty"><b>Nenhuma obra liberada ainda</b>Quando a Souza Engenharia liberar uma obra para você, ela aparece aqui.</div></div>'}
+      <div class="pagehead"><div><h1>Área do cliente</h1><p>${primeiroNome() ? `Olá, ${esc(primeiroNome())}.` : ''}</p></div></div>
+      ${cs.length ? `<div class="pt-clis">${cs.map((c) => { const n = (c.servicos || []).length, no = obrasDo(c.id).length; return `<a class="card pt-cli" href="#/c/${enc(c.id)}"><b>${esc(c.nome)}</b><small>${n} ${n === 1 ? 'serviço' : 'serviços'}${no ? ` · ${no} ${no === 1 ? 'obra' : 'obras'}` : ''}</small></a>`; }).join('')}</div>` : ''}
+      ${av.length ? `${cs.length ? '<h2 class="pt-h2">Obras</h2>' : ''}<div class="r-obras">${av.map(cardObra).join('')}</div>` : ''}
+      ${!cs.length && !av.length ? '<div class="card"><div class="empty"><b>Nada liberado ainda</b>Quando a Souza Engenharia liberar os documentos e as obras do seu condomínio, eles aparecem aqui.</div></div>' : ''}
     </div>`;
   }
-  async function abrirObra(id, diario) {
-    $('#app').innerHTML = '<div class="pt-carregando">Carregando…</div>';
-    try {
-      est.dados = await rpc('rdo_cliente_obra', { p_obra: id });
-      est.aba = 'diarios';
-      est.aberto = diario || null;
-      if (!diario) history.replaceState(null, '', '#/o/' + encodeURIComponent(id));
-      desenhar();
-    } catch (e) { toast(e.message, true); telaObras(); }
+  const ICONE_DOC = { pasta: IC.pasta, link: IC.externo };
+  function telaCliente(cid) {
+    const c = clienteSessao(cid);
+    const sv = c.servicos || [];
+    const hoje = R.isoData ? R.isoData(new Date()) : new Date().toISOString().slice(0, 10);
+    const vencs = sv.map((s) => ({ s, v: R.vencimento(s) })).filter((x) => x.v).map((x) => Object.assign(x, R.situacaoVenc(x.v, hoje))).sort((a, b) => a.v.localeCompare(b.v));
+    const emDia = new Set(sv.filter((s) => { const v = R.vencimento(s); return !v || R.situacaoVenc(v, hoje).estado === 'emdia'; }).map((s) => s.tipo));
+    const ofertas = R.OFERTAS.filter((o) => !emDia.has(o.tipo) && !vencs.some((x) => x.s.tipo === o.tipo)).slice(0, 6);
+    const obras = obrasDo(cid);
+    const quem = primeiroNome() ? `Sou ${primeiroNome()}, do ${c.nome}.` : `Sou do ${c.nome}.`;
+    const varios = clientesSessao().length + obrasAvulsas().length > 1;
+    $('#app').innerHTML = `<div class="pt pt-area">${topo()}
+      ${varios ? `<a class="btn ghost sm pt-voltar" href="#/">${icone(IC.esq)}Início</a>` : ''}
+      <div class="pagehead"><div><h1>${esc(c.nome)}</h1><p>${primeiroNome() ? `Olá, ${esc(primeiroNome())}. ` : ''}Documentos e serviços da Souza Engenharia.</p></div></div>
+      ${vencs.length ? `<section class="card pt-venc"><div class="hd"><div><h3>Vencimentos</h3><p>Quando cada laudo precisa ser renovado.</p></div></div><div class="bd"><ul>${vencs.map((x) => `<li class="${x.estado}">
+          <span class="pt-venc-t"><b>${esc(x.s.titulo || R.nomeTipo(x.s.tipo))}</b><small>${x.estado === 'vencido' ? `Venceu em ${dataBR(x.v)}` : `Vence em ${dataBR(x.v)}`}${x.estado === 'perto' ? ` · faltam ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : ''}</small></span>
+          ${x.estado === 'emdia' ? '<span class="chip ok">Em dia</span>' : `<a class="btn sm ${x.estado === 'vencido' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} O ${x.s.titulo || R.nomeTipo(x.s.tipo)}${x.s.codigo ? ' (' + x.s.codigo + ')' : ''} ${x.estado === 'vencido' ? 'venceu' : 'vence'} em ${dataBR(x.v)}. Gostaria de agendar a renovação.`))}" target="_blank" rel="noopener">Pedir renovação</a>`}</li>`).join('')}</ul></div></section>` : ''}
+      <h2 class="pt-h2">Serviços</h2>
+      ${sv.length ? sv.map((s) => `<section class="card pt-sv"><div class="hd"><div><h3>${esc(s.titulo || R.nomeTipo(s.tipo))}</h3><p>${esc([R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</p></div>
+          <span class="chip ${s.situacao === 'entregue' ? 'ok' : 'atencao'}">${s.situacao === 'entregue' ? 'Entregue' : 'Em andamento'}</span></div>
+        <div class="bd">${(s.itens || []).length ? `<ul class="pt-docs">${s.itens.map((it) => { const d = R.drive(it.url) || { tipo: 'link', abrir: it.url };
+          return d.tipo === 'link'
+            ? `<li><a href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span><b>${esc(it.nome)}</b><small>Abre em outra aba</small></span></a></li>`
+            : `<li><a href="#/c/${enc(cid)}/doc/${enc(s.id)}/${enc(it.id)}">${icone(ICONE_DOC[d.tipo] || IC.nota)}<span><b>${esc(it.nome)}</b><small>${d.tipo === 'pasta' ? 'Pasta com arquivos' : 'Documento'}</small></span>${icone(IC.dir)}</a></li>`; }).join('')}</ul>`
+          : '<p class="small muted">Os documentos aparecem aqui assim que forem entregues.</p>'}</div></section>`).join('')
+        : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
+      ${obras.length ? `<h2 class="pt-h2">Obras</h2><div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}
+      ${ofertas.length ? `<h2 class="pt-h2">Outros serviços da Souza Engenharia</h2><div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}"><b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
+          <a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a></div>`).join('')}</div>` : ''}
+    </div>`;
+    window.scrollTo(0, 0);
+  }
+  function telaDoc(cid, sid, iid) {
+    const c = clienteSessao(cid), s = c && (c.servicos || []).find((x) => x.id === sid), it = s && (s.itens || []).find((x) => x.id === iid);
+    if (!it) { location.replace(c ? '#/c/' + enc(cid) : '#/'); return; }
+    const d = R.drive(it.url) || { tipo: 'link', abrir: it.url };
+    $('#app').innerHTML = `<div class="pt pt-docv">${topo()}
+      <div class="ob-topo"><a class="btn icon" href="#/c/${enc(cid)}" aria-label="Voltar">${icone(IC.esq)}</a>
+        <div class="tit"><b>${esc(it.nome)}</b><span>${esc(s.titulo || R.nomeTipo(s.tipo))} · ${esc(c.nome)}</span></div>
+        <div class="actions">${d.baixar ? `<a class="btn" href="${esc(d.baixar)}" target="_blank" rel="noopener">${icone(IC.baixar)}<span>Baixar</span></a>` : ''}<a class="btn" href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span>Abrir no Drive</span></a></div></div>
+      ${d.preview ? `<div class="pt-frame ${d.tipo}"><iframe src="${esc(d.preview)}" title="${esc(it.nome)}" loading="lazy" allow="autoplay" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+        <p class="small muted pt-doc-dica">${d.tipo === 'pasta' ? 'Toque num arquivo para abrir. ' : ''}Se não aparecer, use "Abrir no Drive".</p>` : ''}
+    </div>`;
+    window.scrollTo(0, 0);
   }
   function modalSenha() {
     const bg = document.createElement('div');
@@ -163,15 +245,15 @@
 
   /* ---------------- obra ---------------- */
   function desenhar() {
-    const j = est.dados; if (!j) { if (est.sessao) telaObras(); else telaEntrada(); return; }
+    const j = est.dados; if (!j) { if (est.sessao) telaInicio(); else telaEntrada(); return; }
     if (est.aberto) { telaDiario(est.aberto); return; }
     const o = j.obra, ds = (j.diarios || []).slice().sort(R.ordemDiario);
     const prog = R.progresso(o, ds), pz = R.prazo(o, ds, R.dataRef(o, ds));
     const clima = (d) => R.PERIODOS.map(([k]) => (d.clima && d.clima[k] && d.clima[k].tempo ? `<span title="${esc(R.nomeDe(R.TEMPOS, d.clima[k].tempo))}">${R.iconeTempo(d.clima[k].tempo)}</span>` : '<span class="r-sem">-</span>')).join('');
     const barra = (p, cls = '') => `<div class="r-bar ${cls}"><i style="width:${Math.max(0, Math.min(100, p || 0)).toFixed(1)}%"></i></div>`;
-    const variasObras = est.sessao && (est.obras || []).length > 1;
+    const volta = est.sessao ? voltarDaObra((est.obras || []).find((x) => x.id === o.id) || o) : null;
     $('#app').innerHTML = `<div class="pt">${topo(o)}
-      ${variasObras ? `<a class="btn ghost sm pt-voltar" href="#/" data-p="obras">${icone(IC.esq)}Todas as obras</a>` : ''}
+      ${volta ? `<a class="btn ghost sm pt-voltar" href="${esc(volta.href)}">${icone(IC.esq)}${esc(volta.rot)}</a>` : ''}
       <div class="pagehead"><div><h1>${esc(o.nome)}</h1><p>${esc([o.contrato && 'Contrato ' + o.contrato, o.contratante, o.local].filter(Boolean).join(' · '))}</p></div></div>
       <div class="r-kpis">
         <div><span>Avanço da obra</span><b>${R.fmtPct(prog.geral, 1)}</b>${barra(prog.geral)}</div>
@@ -234,24 +316,15 @@
     if (a === 'sair') { e.preventDefault(); sair(); }
     if (a === 'aba') { e.preventDefault(); est.aba = b.dataset.v; desenhar(); }
     const base = () => (est.sessao && est.dados ? '#/o/' + encodeURIComponent(est.dados.obra.id) : '');
-    if (a === 'abrir') { e.preventDefault(); est.aberto = b.dataset.id; history.pushState(null, '', (base() || '#') + '/d/' + encodeURIComponent(b.dataset.id)); telaDiario(b.dataset.id); }
-    if (a === 'voltar') { e.preventDefault(); est.aberto = null; history.pushState(null, '', base() || location.pathname); desenhar(); }
+    if (a === 'abrir') { e.preventDefault(); if (est.sessao) { location.hash = base() + '/d/' + encodeURIComponent(b.dataset.id); return; } est.aberto = b.dataset.id; history.pushState(null, '', '#/d/' + encodeURIComponent(b.dataset.id)); telaDiario(b.dataset.id); }
+    if (a === 'voltar') { e.preventDefault(); if (est.sessao) { location.hash = base(); return; } est.aberto = null; history.pushState(null, '', location.pathname); desenhar(); }
     if (a === 'pdf') { e.preventDefault(); pdf(); }
-    if (a === 'obra') { e.preventDefault(); history.pushState(null, '', '#/o/' + encodeURIComponent(b.dataset.id)); abrirObra(b.dataset.id); }
-    if (a === 'obras') { e.preventDefault(); history.pushState(null, '', location.pathname); telaObras(); }
     if (a === 'senha') { e.preventDefault(); modalSenha(); }
     if (a === 'recarregar') { e.preventDefault(); iniciarSessao(est.sessao); }
   });
+  window.addEventListener('hashchange', () => { if (est.sessao && est.area) rota(); });
   window.addEventListener('popstate', () => {
-    if (est.sessao) {
-      const h = location.hash.match(/^#\/o\/([^/]+)(?:\/d\/(.+))?$/);
-      if (!h) { if ((est.obras || []).length > 1) telaObras(); else if (est.dados) { est.aberto = null; desenhar(); } return; }
-      const id = decodeURIComponent(h[1]);
-      if (!est.dados || est.dados.obra.id !== id) { abrirObra(id, h[2] ? decodeURIComponent(h[2]) : null); return; }
-      est.aberto = h[2] ? decodeURIComponent(h[2]) : null;
-      desenhar();
-      return;
-    }
+    if (est.sessao) return;
     if (!est.dados) return;
     const h = location.hash.match(/^#\/d\/(.+)$/);
     est.aberto = h ? decodeURIComponent(h[1]) : null;

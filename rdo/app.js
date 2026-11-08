@@ -13,6 +13,8 @@
   const RAIZ = window.SOUZA_RAIZ || '../';
   const LOGO = `${RAIZ}img/logo.png?v=${Sis.VERSAO}`;
   let modo = null; // login | editor | cliente | bloqueado
+  // em clientes.souzaengenharia.com a mesma entrada se apresenta como Área do cliente
+  const AREA = !!window.SOUZA_AREA;
 
   const semRede = (e) => e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test((e && e.message) || '');
 
@@ -22,7 +24,7 @@
     $('#app').innerHTML = `<div class="login"><div class="login-box">
       <img src="${LOGO}" alt="Souza Engenharia" class="login-logo">
       <form class="card" id="rdo-login" onsubmit="return false"><div class="bd">
-        <h1>Diário de obra</h1>
+        <h1>${AREA ? 'Área do cliente' : 'Diário de obra'}</h1>
         <p class="muted small">Entre com o usuário e o código de acesso que a Souza Engenharia enviou (ou com a senha que você criou).</p>
         <label class="f"><span>Usuário</span><input class="inp" id="rl-usuario" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(login)}"></label>
         <label class="f"><span>Senha ou código de acesso</span><input class="inp" type="password" id="rl-senha" autocomplete="current-password"></label>
@@ -51,7 +53,7 @@
     $('#app').innerHTML = `<div class="login"><div class="login-box">
       <img src="${LOGO}" alt="Souza Engenharia" class="login-logo">
       <div class="card"><div class="bd"><h1>Acesso desativado</h1>
-        <p class="muted">${eu.nome ? esc(eu.nome.split(/\s+/)[0]) + ', o' : 'O'} seu acesso ao Diário de obra está desativado. Se precisar dele de novo, fale com a Souza Engenharia.</p>
+        <p class="muted">${eu.nome ? esc(eu.nome.split(/\s+/)[0]) + ', o' : 'O'} seu acesso ${AREA ? 'à Área do cliente' : 'ao Diário de obra'} está desativado. Se precisar dele de novo, fale com a Souza Engenharia.</p>
         <button class="btn grande" id="rl-sair">${icone('sair')}Sair</button></div></div></div></div>`;
     $('#rl-sair').addEventListener('click', sair);
   }
@@ -143,5 +145,5 @@
     })
     .catch((e) => { $('#app').innerHTML = `<div class="login"><div class="login-box"><div class="card"><div class="bd"><h1>Não foi possível abrir</h1><p class="muted">${esc(e.message || String(e))}</p></div></div></div></div>`; });
 
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('../sw.js').catch(() => {});
+  if (!window.SOUZA_SEM_SW && 'serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('../sw.js').catch(() => {});
 })();
