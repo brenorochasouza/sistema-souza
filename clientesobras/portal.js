@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.4`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.5`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -35,7 +35,11 @@
     pasta: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     baixar: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
     externo: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    cadeado: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    relogio: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   };
+  const _brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  const brl = (n) => _brl.format(Number(n) || 0).replace(/\u00a0/g, ' ');
 
   function toast(msg, erro) {
     let w = $('.toast-wrap');
@@ -109,7 +113,8 @@
   }
 
   /* ---------------- área do cliente (usuário e senha) ---------------- */
-  // Rotas: #/ início · #/c/<cliente> · #/c/<cliente>/doc/<serviço>/<item> · #/o/<obra> · #/o/<obra>/d/<diário>
+  // Rotas: #/ início · #/c/<cliente> · #/c/<cliente>/s/<serviço> · …/s/<serviço>/p/<pasta> · …/s/<serviço>/v/<documento|contrato>
+  //        #/o/<obra> · #/o/<obra>/d/<diário>
   const topo = (o) => `<header class="pt-topo"><img src="${LOGO}" alt="Souza Engenharia">${o && o.logoCliente && o.logoCliente.url ? `<img src="${esc(o.logoCliente.url)}" alt="">` : ''}
     <span class="pt-topo-a">${est.sessao ? `<button class="btn ghost sm" data-p="senha">${icone(IC.chave)}<span>Senha</span></button>` : ''}<button class="btn ghost sm" data-p="sair">${icone(IC.sair)}Sair</button></span></header>`;
   const dec = (x) => decodeURIComponent(x);
@@ -147,8 +152,15 @@
       return;
     }
     est.dados = null; est.aberto = null;
-    m = h.match(/^#\/c\/([^/]+)\/doc\/([^/]+)\/([^/]+)$/);
-    if (m) { telaDoc(dec(m[1]), dec(m[2]), dec(m[3])); return; }
+    m = h.match(/^#\/c\/([^/]+)\/doc\/([^/]+)\/([^/]+)$/); // endereço antigo de documento
+    if (m) { location.replace(`#/c/${m[1]}/s/${m[2]}/v/${m[3]}`); return; }
+    m = h.match(/^#\/c\/([^/]+)\/s\/([^/]+)(?:\/(p|v)\/([^/]+))?$/);
+    if (m) {
+      const c = clienteSessao(dec(m[1])), s = c && (c.servicos || []).find((x) => x.id === dec(m[2]));
+      if (!s) { location.replace(c ? '#/c/' + m[1] : '#/'); return; }
+      if (m[3] === 'v') telaDoc(c, s, dec(m[4])); else telaServico(c, s, m[3] === 'p' ? dec(m[4]) : null);
+      return;
+    }
     m = h.match(/^#\/c\/([^/]+)$/);
     if (m && clienteSessao(dec(m[1]))) { telaCliente(dec(m[1])); return; }
     telaInicio();
@@ -177,11 +189,55 @@
       ${!cs.length && !av.length ? '<div class="card"><div class="empty"><b>Nada liberado ainda</b>Quando a Souza Engenharia liberar os documentos e as obras do seu condomínio, eles aparecem aqui.</div></div>' : ''}
     </div>`;
   }
-  const ICONE_DOC = { pasta: IC.pasta, link: IC.externo };
+  /* ----- serviços: pastas, documentos, contrato e pagamentos ----- */
+  const bloqueado = (n) => !!(n.bloqueio && n.bloqueio.ativo);
+  /** Aparece para o cliente: bloqueado (com o aviso), com conteúdo, ou vazio marcado "Em elaboração". */
+  const visivel = (n) => bloqueado(n) || R.temConteudo(n) || n.vazio !== 'oculta';
+  const docsProntos = (l) => (l || []).reduce((t, n) => t + (bloqueado(n) ? 0 : n.tipo === 'pasta' ? docsProntos(n.filhos) : n.url ? 1 : 0), 0);
+  const temElab = (l) => (l || []).some((n) => !bloqueado(n) && (n.tipo === 'pasta' ? (!R.temConteudo(n) && n.vazio !== 'oculta') || temElab(n.filhos) : !n.url && n.vazio !== 'oculta'));
+  const baseSv = (c, s) => `#/c/${enc(c.id)}/s/${enc(s.id)}`;
+  const nomeSv = (s) => s.titulo || R.nomeTipo(s.tipo);
+  const hojeISO = () => (R.isoData ? R.isoData(new Date()) : new Date().toISOString().slice(0, 10));
+  function linhaNo(n, base) {
+    if (bloqueado(n)) return `<li class="bloq"><div>${icone(IC.cadeado)}<span><b>${esc(n.nome)}</b><small>${esc(n.bloqueio.msg || R.MSG_PRELIMINAR)}</small></span></div></li>`;
+    if (!R.temConteudo(n)) return `<li class="elab"><div>${icone(n.tipo === 'pasta' ? IC.pasta : IC.nota)}<span><b>${esc(n.nome)}</b><small>Em elaboração</small></span>${icone(IC.relogio)}</div></li>`;
+    if (n.tipo === 'pasta') {
+      const k = (n.filhos || []).filter(visivel).length;
+      return `<li><a href="${base}/p/${enc(n.id)}">${icone(IC.pasta)}<span><b>${esc(n.nome)}</b><small>${k} ${k === 1 ? 'item' : 'itens'}</small></span>${icone(IC.dir)}</a></li>`;
+    }
+    const d = R.drive(n.url) || { tipo: 'link', abrir: n.url };
+    return d.tipo === 'link'
+      ? `<li><a href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span><b>${esc(n.nome)}</b><small>Abre em outra aba</small></span></a></li>`
+      : `<li><a href="${base}/v/${enc(n.id)}">${icone(d.tipo === 'pasta' ? IC.pasta : IC.nota)}<span><b>${esc(n.nome)}</b><small>${d.tipo === 'pasta' ? 'Pasta com arquivos' : 'Documento'}</small></span>${icone(IC.dir)}</a></li>`;
+  }
+  const htmlNos = (lista, base) => { const l = (lista || []).filter(visivel); return l.length ? `<ul class="pt-docs">${l.map((n) => linhaNo(n, base)).join('')}</ul>` : ''; };
+  /** Contrato e pagamentos: o link do contrato e as parcelas (copiadas da carteira da Souza). */
+  function htmlContrato(c, s) {
+    const f = s.financeiro, temF = f && ((f.parcelas || []).length || f.valor);
+    if (!s.contratoUrl && !temF) return '';
+    const r = temF ? R.resumoFinanceiro(f) : null, hoje = hojeISO();
+    const dc = s.contratoUrl ? R.drive(s.contratoUrl) || { tipo: 'link', abrir: s.contratoUrl } : null;
+    const estP = (p) => (p.pago ? ['ok', p.dataPago ? `Paga em ${dataBR(p.dataPago)}` : 'Paga'] : p.venc && p.venc < hoje ? ['estourado', `Venceu em ${dataBR(p.venc)}`] : ['neutro', p.venc ? `Vence em ${dataBR(p.venc)}` : 'A vencer']);
+    return `<section class="card pt-ct"><div class="hd"><div><h3>Contrato e pagamentos</h3>${r ? `<p>${r.parcelas.filter((p) => p.pago).length} de ${r.parcelas.length} ${r.parcelas.length === 1 ? 'parcela paga' : 'parcelas pagas'}</p>` : ''}</div>
+        ${dc ? `<a class="btn sm" href="${dc.tipo === 'link' ? esc(dc.abrir) : baseSv(c, s) + '/v/contrato'}" ${dc.tipo === 'link' ? 'target="_blank" rel="noopener"' : ''}>${icone(IC.nota)}Ver o contrato</a>` : ''}</div>
+      ${r ? `<div class="bd"><div class="pt-ct-k"><div><span>Valor do contrato</span><b>${brl(r.total)}</b></div><div><span>Pago</span><b class="pt-ok">${brl(r.pago)}</b></div><div><span>A pagar</span><b>${brl(r.aPagar)}</b></div></div>
+        <div class="r-bar ok pt-ct-bar" role="img" aria-label="${r.pct.toFixed(0)}% pago"><i style="width:${Math.min(100, r.pct).toFixed(1)}%"></i></div>
+        ${r.parcelas.length ? `<ul class="pt-pc">${r.parcelas.map((p, i) => { const [cls, txt] = estP(p); return `<li><span class="pt-pc-t"><b>${esc(p.desc || `Parcela ${i + 1}`)}</b><small>${esc(txt)}</small></span><span class="pt-pc-v">${brl(p.valor)}</span><span class="chip ${cls}">${p.pago ? 'Paga' : cls === 'estourado' ? 'Em aberto' : 'A vencer'}</span></li>`; }).join('')}</ul>` : ''}</div>` : ''}</section>`;
+  }
+  function cardServico(c, s) {
+    const n = docsProntos(R.estruturaDe(s)), el = temElab(R.estruturaDe(s));
+    const f = s.financeiro, ps = (f && f.parcelas) || [];
+    const partes = [n ? `${n} ${n === 1 ? 'documento disponível' : 'documentos disponíveis'}` : el ? 'Documentos em elaboração' : 'Documentos ainda não entregues'];
+    if (n && el) partes.push('outros em elaboração');
+    if (ps.length) partes.push(`${ps.filter((p) => p.pago).length} de ${ps.length} parcelas pagas`);
+    return `<a class="card pt-sv" href="${baseSv(c, s)}"><span class="pt-sv-ic">${icone(IC.pasta)}</span><span class="pt-sv-t"><b>${esc(nomeSv(s))}</b>
+      <small>${esc([R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</small><small>${esc(partes.join(' · '))}</small></span>
+      <span class="chip ${s.situacao === 'entregue' ? 'ok' : 'atencao'}">${s.situacao === 'entregue' ? 'Entregue' : 'Em andamento'}</span>${icone(IC.dir)}</a>`;
+  }
   function telaCliente(cid) {
     const c = clienteSessao(cid);
     const sv = c.servicos || [];
-    const hoje = R.isoData ? R.isoData(new Date()) : new Date().toISOString().slice(0, 10);
+    const hoje = hojeISO();
     const vencs = sv.map((s) => ({ s, v: R.vencimento(s) })).filter((x) => x.v).map((x) => Object.assign(x, R.situacaoVenc(x.v, hoje))).sort((a, b) => a.v.localeCompare(b.v));
     const emDia = new Set(sv.filter((s) => { const v = R.vencimento(s); return !v || R.situacaoVenc(v, hoje).estado === 'emdia'; }).map((s) => s.tipo));
     const ofertas = R.OFERTAS.filter((o) => !emDia.has(o.tipo) && !vencs.some((x) => x.s.tipo === o.tipo)).slice(0, 6);
@@ -192,32 +248,53 @@
       ${varios ? `<a class="btn ghost sm pt-voltar" href="#/">${icone(IC.esq)}Início</a>` : ''}
       <div class="pagehead"><div><h1>${esc(c.nome)}</h1><p>${primeiroNome() ? `Olá, ${esc(primeiroNome())}. ` : ''}Documentos e serviços da Souza Engenharia.</p></div></div>
       ${vencs.length ? `<section class="card pt-venc"><div class="hd"><div><h3>Vencimentos</h3><p>Quando cada laudo precisa ser renovado.</p></div></div><div class="bd"><ul>${vencs.map((x) => `<li class="${x.estado}">
-          <span class="pt-venc-t"><b>${esc(x.s.titulo || R.nomeTipo(x.s.tipo))}</b><small>${x.estado === 'vencido' ? `Venceu em ${dataBR(x.v)}` : `Vence em ${dataBR(x.v)}`}${x.estado === 'perto' ? ` · faltam ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : ''}</small></span>
-          ${x.estado === 'emdia' ? '<span class="chip ok">Em dia</span>' : `<a class="btn sm ${x.estado === 'vencido' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} O ${x.s.titulo || R.nomeTipo(x.s.tipo)}${x.s.codigo ? ' (' + x.s.codigo + ')' : ''} ${x.estado === 'vencido' ? 'venceu' : 'vence'} em ${dataBR(x.v)}. Gostaria de agendar a renovação.`))}" target="_blank" rel="noopener">Pedir renovação</a>`}</li>`).join('')}</ul></div></section>` : ''}
+          <span class="pt-venc-t"><b>${esc(nomeSv(x.s))}</b><small>${x.estado === 'vencido' ? `Venceu em ${dataBR(x.v)}` : `Vence em ${dataBR(x.v)}`}${x.estado === 'perto' ? ` · faltam ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : ''}</small></span>
+          ${x.estado === 'emdia' ? '<span class="chip ok">Em dia</span>' : `<a class="btn sm ${x.estado === 'vencido' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} O ${nomeSv(x.s)}${x.s.codigo ? ' (' + x.s.codigo + ')' : ''} ${x.estado === 'vencido' ? 'venceu' : 'vence'} em ${dataBR(x.v)}. Gostaria de agendar a renovação.`))}" target="_blank" rel="noopener">Pedir renovação</a>`}</li>`).join('')}</ul></div></section>` : ''}
       <h2 class="pt-h2">Serviços</h2>
-      ${sv.length ? sv.map((s) => `<section class="card pt-sv"><div class="hd"><div><h3>${esc(s.titulo || R.nomeTipo(s.tipo))}</h3><p>${esc([R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</p></div>
-          <span class="chip ${s.situacao === 'entregue' ? 'ok' : 'atencao'}">${s.situacao === 'entregue' ? 'Entregue' : 'Em andamento'}</span></div>
-        <div class="bd">${(s.itens || []).length ? `<ul class="pt-docs">${s.itens.map((it) => { const d = R.drive(it.url) || { tipo: 'link', abrir: it.url };
-          return d.tipo === 'link'
-            ? `<li><a href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span><b>${esc(it.nome)}</b><small>Abre em outra aba</small></span></a></li>`
-            : `<li><a href="#/c/${enc(cid)}/doc/${enc(s.id)}/${enc(it.id)}">${icone(ICONE_DOC[d.tipo] || IC.nota)}<span><b>${esc(it.nome)}</b><small>${d.tipo === 'pasta' ? 'Pasta com arquivos' : 'Documento'}</small></span>${icone(IC.dir)}</a></li>`; }).join('')}</ul>`
-          : '<p class="small muted">Os documentos aparecem aqui assim que forem entregues.</p>'}</div></section>`).join('')
-        : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
+      ${sv.length ? `<div class="pt-svs">${sv.map((s) => cardServico(c, s)).join('')}</div>` : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
       ${obras.length ? `<h2 class="pt-h2">Obras</h2><div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}
       ${ofertas.length ? `<h2 class="pt-h2">Outros serviços da Souza Engenharia</h2><div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}"><b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
           <a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a></div>`).join('')}</div>` : ''}
     </div>`;
     window.scrollTo(0, 0);
   }
-  function telaDoc(cid, sid, iid) {
-    const c = clienteSessao(cid), s = c && (c.servicos || []).find((x) => x.id === sid), it = s && (s.itens || []).find((x) => x.id === iid);
-    if (!it) { location.replace(c ? '#/c/' + enc(cid) : '#/'); return; }
-    const d = R.drive(it.url) || { tipo: 'link', abrir: it.url };
+  /** Página do serviço (pid vazio) ou de uma pasta dele. */
+  function telaServico(c, s, pid) {
+    const raiz = R.estruturaDe(s), base = baseSv(c, s);
+    let lista = raiz, titulo = nomeSv(s), sub = [R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '), volta = '#/c/' + enc(c.id);
+    if (pid) {
+      const a = R.acharNo(raiz, pid);
+      if (!a || a.no.tipo !== 'pasta' || bloqueado(a.no) || a.pais.some(bloqueado)) { location.replace(base); return; }
+      lista = a.no.filhos || []; titulo = a.no.nome;
+      sub = [nomeSv(s)].concat(a.pais.map((p) => p.nome)).join(' › ');
+      volta = a.pais.length ? `${base}/p/${enc(a.pais[a.pais.length - 1].id)}` : base;
+    }
+    const docs = htmlNos(lista, base);
+    $('#app').innerHTML = `<div class="pt pt-area">${topo()}
+      <div class="ob-topo"><a class="btn icon" href="${volta}" aria-label="Voltar">${icone(IC.esq)}</a>
+        <div class="tit"><b>${esc(titulo)}</b><span>${esc(sub)}${pid ? '' : ` · ${esc(c.nome)}`}</span></div>
+        ${pid ? '' : `<div class="actions"><span class="chip ${s.situacao === 'entregue' ? 'ok' : 'atencao'}">${s.situacao === 'entregue' ? 'Entregue' : 'Em andamento'}</span></div>`}</div>
+      ${pid ? '' : htmlContrato(c, s)}
+      ${pid ? '' : '<h2 class="pt-h2">Documentos</h2>'}
+      <section class="card pt-sv-docs"><div class="bd">${docs || `<p class="small muted">${pid ? 'Esta pasta está vazia.' : 'Os documentos aparecem aqui assim que forem entregues.'}</p>`}</div></section>
+    </div>`;
+    window.scrollTo(0, 0);
+  }
+  function telaDoc(c, s, nid) {
+    const raiz = R.estruturaDe(s), base = baseSv(c, s);
+    let url = '', nome = '', volta = base;
+    if (nid === 'contrato') { url = s.contratoUrl; nome = 'Contrato'; }
+    else {
+      const a = R.acharNo(raiz, nid);
+      if (a && a.no.tipo === 'doc' && !bloqueado(a.no) && !a.pais.some(bloqueado)) { url = a.no.url; nome = a.no.nome; if (a.pais.length) volta = `${base}/p/${enc(a.pais[a.pais.length - 1].id)}`; }
+    }
+    if (!url) { location.replace(base); return; }
+    const d = R.drive(url) || { tipo: 'link', abrir: url };
     $('#app').innerHTML = `<div class="pt pt-docv">${topo()}
-      <div class="ob-topo"><a class="btn icon" href="#/c/${enc(cid)}" aria-label="Voltar">${icone(IC.esq)}</a>
-        <div class="tit"><b>${esc(it.nome)}</b><span>${esc(s.titulo || R.nomeTipo(s.tipo))} · ${esc(c.nome)}</span></div>
+      <div class="ob-topo"><a class="btn icon" href="${volta}" aria-label="Voltar">${icone(IC.esq)}</a>
+        <div class="tit"><b>${esc(nome)}</b><span>${esc(nomeSv(s))} · ${esc(c.nome)}</span></div>
         <div class="actions">${d.baixar ? `<a class="btn" href="${esc(d.baixar)}" target="_blank" rel="noopener">${icone(IC.baixar)}<span>Baixar</span></a>` : ''}<a class="btn" href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span>Abrir no Drive</span></a></div></div>
-      ${d.preview ? `<div class="pt-frame ${d.tipo}"><iframe src="${esc(d.preview)}" title="${esc(it.nome)}" loading="lazy" allow="autoplay" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+      ${d.preview ? `<div class="pt-frame ${d.tipo}"><iframe src="${esc(d.preview)}" title="${esc(nome)}" loading="lazy" allow="autoplay" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
         <p class="small muted pt-doc-dica">${d.tipo === 'pasta' ? 'Toque num arquivo para abrir. ' : ''}Se não aparecer, use "Abrir no Drive".</p>` : ''}
     </div>`;
     window.scrollTo(0, 0);

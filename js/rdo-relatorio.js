@@ -73,6 +73,56 @@ window.RDO = (function () {
     return { dias, estado: dias < 0 ? 'vencido' : dias <= 120 ? 'perto' : 'emdia' };
   }
   const linkWhats = (txt) => `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(txt)}`;
+  /*
+   * Estrutura de um serviço na área do cliente: lista de posições.
+   *   documento: { id, tipo: 'doc', nome, url, vazio }
+   *   pasta:     { id, tipo: 'pasta', nome, vazio, filhos: [...] }
+   * vazio: 'elaboracao' (aparece "Em elaboração") ou 'oculta' (some enquanto vazia).
+   * bloqueio: { ativo, msg } só no projeto preliminar do AVCB (o link nem sai do banco).
+   */
+  const MSG_PRELIMINAR = 'O projeto preliminar não é disponibilizado, para evitar que seja utilizado no futuro ou tomado como a versão final do projeto. A versão válida é o projeto aprovado pelo Corpo de Bombeiros.';
+  const noDoc = (nome, o) => Object.assign({ tipo: 'doc', nome, url: '', vazio: 'elaboracao' }, o || {});
+  const noPasta = (nome, o) => Object.assign({ tipo: 'pasta', nome, vazio: 'elaboracao', filhos: [] }, o || {});
+  const MODELOS = {
+    avcb: { nome: 'AVCB', estrutura: [
+      noPasta('Projeto preliminar', { bloqueio: { ativo: true, msg: MSG_PRELIMINAR } }),
+      noPasta('Projeto aprovado', { filhos: [noPasta('Documentos'), noPasta('Projeto de incêndio'), noPasta('Projeto de SPDA')] }),
+      noDoc('ACP (Atestado de Conformidade do Projeto)'),
+    ] },
+    inspecao_predial: { nome: 'Inspeção predial', estrutura: [noDoc('Laudo'), noDoc('Fotos em alta qualidade'), noPasta('Outros arquivos', { vazio: 'oculta' })] },
+    fachada: { nome: 'Inspeção de fachadas', estrutura: [noDoc('Laudo'), noDoc('Fotos em alta qualidade'), noDoc('Planilha com o escopo da obra'), noDoc('Termo de referência para contratação'), noPasta('Outros arquivos', { vazio: 'oculta' })] },
+  };
+  // ids fixos nos modelos prontos (para poder editar cada posição)
+  Object.keys(MODELOS).forEach((k) => (function marcar(l, pre) { l.forEach((n, i) => { n.id = `${pre}${i}`; if (n.filhos) marcar(n.filhos, `${n.id}.`); }); })(MODELOS[k].estrutura, `m-${k}-`));
+  let _seq = 0;
+  const idNo = () => 'n' + Date.now().toString(36) + (_seq++).toString(36) + Math.random().toString(36).slice(2, 6);
+  /** Cópia da estrutura com ids novos; sem os links quando for para virar modelo ou serviço novo. */
+  function copiarEstrutura(lista, { semLinks = false } = {}) {
+    return (lista || []).map((n) => {
+      const c = Object.assign({}, n, { id: idNo() });
+      if (c.bloqueio) c.bloqueio = Object.assign({}, c.bloqueio, semLinks ? { ativo: true } : {});
+      if (c.tipo === 'pasta') c.filhos = copiarEstrutura(n.filhos, { semLinks });
+      else if (semLinks) c.url = '';
+      return c;
+    });
+  }
+  /** Estrutura do serviço (serviços antigos tinham só a lista "itens"). */
+  const estruturaDe = (s) => (Array.isArray(s && s.estrutura) ? s.estrutura : ((s && s.itens) || []).map((it) => ({ id: it.id, tipo: 'doc', nome: it.nome, url: it.url, vazio: 'elaboracao' })));
+  const temConteudo = (n) => (n.tipo === 'doc' ? !!n.url : (n.filhos || []).some(temConteudo));
+  function acharNo(lista, id, pais = []) {
+    for (const n of lista || []) {
+      if (n.id === id) return { no: n, pais, lista };
+      if (n.tipo === 'pasta') { const r = acharNo(n.filhos, id, pais.concat([n])); if (r) return r; }
+    }
+    return null;
+  }
+  /** Resumo do contrato: total, pago, a pagar e as parcelas. */
+  function resumoFinanceiro(f) {
+    const ps = (f && f.parcelas) || [];
+    const total = ps.reduce((t, p) => t + (Number(p.valor) || 0), 0) || Number(f && f.valor) || 0;
+    const pago = ps.filter((p) => p.pago).reduce((t, p) => t + (Number(p.valor) || 0), 0);
+    return { total, pago, aPagar: Math.max(0, total - pago), pct: total > 0 ? (pago / total) * 100 : 0, parcelas: ps };
+  }
   /**
    * Link do Google Drive: arquivo, pasta ou documento Google.
    * Devolve como mostrar dentro do portal (preview), abrir no Drive e baixar.
@@ -334,7 +384,7 @@ window.RDO = (function () {
   return {
     ajustarZoom,
     esc, dataBR, deISO, isoData, somaDias, difDias, diaSemana, dataHora, num, fmtPct, dias,
-    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, OFERTAS, vencimento, situacaoVenc, linkWhats, GRUPOS_PADRAO, nomeDe, iconeTempo,
+    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, OFERTAS, vencimento, situacaoVenc, linkWhats, MODELOS, MSG_PRELIMINAR, copiarEstrutura, estruturaDe, temConteudo, acharNo, idNo, resumoFinanceiro, GRUPOS_PADRAO, nomeDe, iconeTempo,
     servicos, rotServ, rotEtapa, statusPct, ordemDiario, horas, fmtHoras, horario,
     progresso, prazo, dataRef, choveu, impraticavel, totalMao, aprovacao, impactoTxt, diarioHTML,
   };

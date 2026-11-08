@@ -5,7 +5,7 @@
    atualização vale para as duas entradas.
    ========================================================= */
 (function () {
-  var V = '1.4.4';
+  var V = '1.4.5';
   var RAIZ = new URL('..', document.currentScript.src).href;
   window.SOUZA_RAIZ = RAIZ;
   window.PORTAL_SESSAO = true;
