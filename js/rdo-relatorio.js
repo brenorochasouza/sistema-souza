@@ -76,7 +76,7 @@ window.RDO = (function () {
   /*
    * Estrutura de um serviço na área do cliente: lista de posições.
    *   documento: { id, tipo: 'doc', nome, url, vazio }
-   *   pasta:     { id, tipo: 'pasta', nome, vazio, filhos: [...] }
+   *   pasta:     { id, tipo: 'pasta', nome, url, vazio, filhos: [...] } (url: a pasta do Drive, abre direto)
    * vazio: 'elaboracao' (aparece "Em elaboração") ou 'oculta' (some enquanto vazia).
    * bloqueio: { ativo, msg } só no projeto preliminar do AVCB (o link nem sai do banco).
    */
@@ -102,13 +102,13 @@ window.RDO = (function () {
       const c = Object.assign({}, n, { id: idNo() });
       if (c.bloqueio) c.bloqueio = Object.assign({}, c.bloqueio, semLinks ? { ativo: true } : {});
       if (c.tipo === 'pasta') c.filhos = copiarEstrutura(n.filhos, { semLinks });
-      else if (semLinks) c.url = '';
+      if (semLinks) { if (c.tipo === 'pasta') delete c.url; else c.url = ''; }
       return c;
     });
   }
   /** Estrutura do serviço (serviços antigos tinham só a lista "itens"). */
   const estruturaDe = (s) => (Array.isArray(s && s.estrutura) ? s.estrutura : ((s && s.itens) || []).map((it) => ({ id: it.id, tipo: 'doc', nome: it.nome, url: it.url, vazio: 'elaboracao' })));
-  const temConteudo = (n) => (n.tipo === 'doc' ? !!n.url : (n.filhos || []).some(temConteudo));
+  const temConteudo = (n) => !!n.url || (n.tipo === 'pasta' && (n.filhos || []).some(temConteudo));
   function acharNo(lista, id, pais = []) {
     for (const n of lista || []) {
       if (n.id === id) return { no: n, pais, lista };

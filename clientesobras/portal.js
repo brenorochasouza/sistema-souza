@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.5`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.6`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -193,7 +193,10 @@
   const bloqueado = (n) => !!(n.bloqueio && n.bloqueio.ativo);
   /** Aparece para o cliente: bloqueado (com o aviso), com conteúdo, ou vazio marcado "Em elaboração". */
   const visivel = (n) => bloqueado(n) || R.temConteudo(n) || n.vazio !== 'oculta';
-  const docsProntos = (l) => (l || []).reduce((t, n) => t + (bloqueado(n) ? 0 : n.tipo === 'pasta' ? docsProntos(n.filhos) : n.url ? 1 : 0), 0);
+  const docsProntos = (l) => (l || []).reduce((t, n) => t + (bloqueado(n) ? 0 : (n.url ? 1 : 0) + (n.tipo === 'pasta' ? docsProntos(n.filhos) : 0)), 0);
+  /** Pasta que só tem o link do Drive (nada dentro dela no portal): abre direto a pasta do Drive. */
+  const soLink = (n) => !!n.url && !(n.filhos || []).some(R.temConteudo);
+  const caminho = (s, pais) => [nomeSv(s)].concat(pais.map((p) => p.nome)).join(' › ');
   const temElab = (l) => (l || []).some((n) => !bloqueado(n) && (n.tipo === 'pasta' ? (!R.temConteudo(n) && n.vazio !== 'oculta') || temElab(n.filhos) : !n.url && n.vazio !== 'oculta'));
   const baseSv = (c, s) => `#/c/${enc(c.id)}/s/${enc(s.id)}`;
   const nomeSv = (s) => s.titulo || R.nomeTipo(s.tipo);
@@ -201,8 +204,8 @@
   function linhaNo(n, base) {
     if (bloqueado(n)) return `<li class="bloq"><div>${icone(IC.cadeado)}<span><b>${esc(n.nome)}</b><small>${esc(n.bloqueio.msg || R.MSG_PRELIMINAR)}</small></span></div></li>`;
     if (!R.temConteudo(n)) return `<li class="elab"><div>${icone(n.tipo === 'pasta' ? IC.pasta : IC.nota)}<span><b>${esc(n.nome)}</b><small>Em elaboração</small></span>${icone(IC.relogio)}</div></li>`;
-    if (n.tipo === 'pasta') {
-      const k = (n.filhos || []).filter(visivel).length;
+    if (n.tipo === 'pasta' && !soLink(n)) {
+      const k = (n.filhos || []).filter(visivel).length + (n.url ? 1 : 0);
       return `<li><a href="${base}/p/${enc(n.id)}">${icone(IC.pasta)}<span><b>${esc(n.nome)}</b><small>${k} ${k === 1 ? 'item' : 'itens'}</small></span>${icone(IC.dir)}</a></li>`;
     }
     const d = R.drive(n.url) || { tipo: 'link', abrir: n.url };
@@ -266,7 +269,9 @@
       const a = R.acharNo(raiz, pid);
       if (!a || a.no.tipo !== 'pasta' || bloqueado(a.no) || a.pais.some(bloqueado)) { location.replace(base); return; }
       lista = a.no.filhos || []; titulo = a.no.nome;
-      sub = [nomeSv(s)].concat(a.pais.map((p) => p.nome)).join(' › ');
+      // pasta com o link do Drive e mais coisas dentro: a pasta do Drive vem primeiro
+      if (a.no.url) lista = [{ id: a.no.id, tipo: 'doc', nome: 'Arquivos da pasta', url: a.no.url }].concat(lista);
+      sub = caminho(s, a.pais);
       volta = a.pais.length ? `${base}/p/${enc(a.pais[a.pais.length - 1].id)}` : base;
     }
     const docs = htmlNos(lista, base);
@@ -282,17 +287,21 @@
   }
   function telaDoc(c, s, nid) {
     const raiz = R.estruturaDe(s), base = baseSv(c, s);
-    let url = '', nome = '', volta = base;
+    let url = '', nome = '', volta = base, onde = nomeSv(s);
     if (nid === 'contrato') { url = s.contratoUrl; nome = 'Contrato'; }
     else {
       const a = R.acharNo(raiz, nid);
-      if (a && a.no.tipo === 'doc' && !bloqueado(a.no) && !a.pais.some(bloqueado)) { url = a.no.url; nome = a.no.nome; if (a.pais.length) volta = `${base}/p/${enc(a.pais[a.pais.length - 1].id)}`; }
+      if (a && a.no.url && !bloqueado(a.no) && !a.pais.some(bloqueado)) {
+        url = a.no.url; nome = a.no.nome; onde = caminho(s, a.pais);
+        if (a.no.tipo === 'pasta' && !soLink(a.no)) volta = `${base}/p/${enc(a.no.id)}`;
+        else if (a.pais.length) volta = `${base}/p/${enc(a.pais[a.pais.length - 1].id)}`;
+      }
     }
     if (!url) { location.replace(base); return; }
     const d = R.drive(url) || { tipo: 'link', abrir: url };
     $('#app').innerHTML = `<div class="pt pt-docv">${topo()}
       <div class="ob-topo"><a class="btn icon" href="${volta}" aria-label="Voltar">${icone(IC.esq)}</a>
-        <div class="tit"><b>${esc(nome)}</b><span>${esc(nomeSv(s))} · ${esc(c.nome)}</span></div>
+        <div class="tit"><b>${esc(nome)}</b><span>${esc(onde)}</span></div>
         <div class="actions">${d.baixar ? `<a class="btn" href="${esc(d.baixar)}" target="_blank" rel="noopener">${icone(IC.baixar)}<span>Baixar</span></a>` : ''}<a class="btn" href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span>Abrir no Drive</span></a></div></div>
       ${d.preview ? `<div class="pt-frame ${d.tipo}"><iframe src="${esc(d.preview)}" title="${esc(nome)}" loading="lazy" allow="autoplay" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
         <p class="small muted pt-doc-dica">${d.tipo === 'pasta' ? 'Toque num arquivo para abrir. ' : ''}Se não aparecer, use "Abrir no Drive".</p>` : ''}

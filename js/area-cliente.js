@@ -74,22 +74,23 @@
   /* ---------- árvore (serviço ou modelo) ---------- */
   const descreverNo = (n, modelo) => {
     if (n.bloqueio && (modelo || n.bloqueio.ativo)) return { txt: modelo ? 'Começa bloqueado em cada serviço' : 'Bloqueado para o cliente', cls: 'bloq' };
-    if (n.tipo === 'doc' && n.url) { const d = R.drive(n.url); return { txt: d ? NOME_LINK[d.tipo] : 'Link', cls: 'ok' }; }
-    if (n.tipo === 'pasta' && R.temConteudo(n)) return { txt: `${(n.filhos || []).length} ${(n.filhos || []).length === 1 ? 'item' : 'itens'}`, cls: 'ok' };
+    const k = (n.filhos || []).length, itens = `${k} ${k === 1 ? 'item' : 'itens'}`;
+    if (n.url) { const d = R.drive(n.url); return { txt: (d ? NOME_LINK[d.tipo] : 'Link') + (n.tipo === 'pasta' && k ? ` · mais ${itens}` : ''), cls: 'ok' }; }
+    if (n.tipo === 'pasta' && R.temConteudo(n)) return { txt: itens, cls: 'ok' };
     const vazio = n.vazio === 'oculta' ? 'oculta enquanto vazia' : 'aparece "Em elaboração"';
     return { txt: modelo ? (n.tipo === 'pasta' ? `Pasta · ${vazio}` : `Documento · ${vazio}`) : `${n.tipo === 'pasta' ? 'Vazia' : 'Sem link'} · ${vazio}`, cls: 'vazio' };
   };
   function htmlArvore(lista, dono, modelo, nivel = 0) {
     return (lista || []).map((n, i) => {
-      const dsc = descreverNo(n, modelo);
+      const dsc = descreverNo(n, modelo), k = (n.filhos || []).length;
       const base = `data-dono="${esc(dono)}" data-no="${esc(n.id)}"`;
       return `<li class="ac-no ${n.tipo} ${dsc.cls}" style="--n:${nivel}">
         <span class="ac-no-ic">${icone(n.bloqueio && n.bloqueio.ativo ? 'cadeado' : n.tipo === 'pasta' ? 'pasta' : 'nota')}</span>
-        <span class="ac-no-t">${n.tipo === 'doc' && n.url ? `<a href="${esc((R.drive(n.url) || {}).abrir || n.url)}" target="_blank" rel="noopener"><b>${esc(n.nome)}</b></a>` : `<b>${esc(n.nome)}</b>`}<small>${esc(dsc.txt)}</small></span>
+        <span class="ac-no-t">${n.url ? `<a href="${esc((R.drive(n.url) || {}).abrir || n.url)}" target="_blank" rel="noopener"><b>${esc(n.nome)}</b></a>` : `<b>${esc(n.nome)}</b>`}<small>${esc(dsc.txt)}</small></span>
         <span class="ac-no-a">
           ${n.bloqueio && !modelo ? `<button class="btn sm ${n.bloqueio.ativo ? '' : 'ghost'}" data-a="ac-no-bloq" ${base}>${n.bloqueio.ativo ? 'Liberar para o cliente' : 'Bloquear de novo'}</button>` : ''}
-          ${!modelo && n.tipo === 'doc' ? `<button class="btn sm ${n.url ? 'ghost' : ''}" data-a="ac-no-link" ${base}>${n.url ? 'Trocar link' : 'Colar link'}</button>` : ''}
-          ${n.tipo === 'pasta' ? `<button class="btn sm ghost" data-a="ac-no-novo" data-t="${modelo ? 'doc' : 'link'}" ${base} title="${modelo ? 'Documento dentro desta pasta' : 'Link dentro desta pasta'}">${icone('mais')}${modelo ? 'Documento' : 'Link'}</button><button class="btn sm ghost" data-a="ac-no-novo" data-t="pasta" ${base}>${icone('mais')}Pasta</button>` : ''}
+          ${!modelo ? `<button class="btn sm ${n.url || (n.tipo === 'pasta' && k) ? 'ghost' : ''}" data-a="ac-no-link" ${base} title="${n.tipo === 'pasta' ? 'Link da pasta no Drive: o cliente abre a pasta direto' : 'Link do arquivo ou da pasta no Drive'}">${n.url ? 'Trocar link' : 'Colar link'}</button>` : ''}
+          ${n.tipo === 'pasta' ? `<button class="btn sm ghost" data-a="ac-no-novo" data-t="doc" ${base} title="Documento dentro desta pasta">${icone('mais')}Documento</button><button class="btn sm ghost" data-a="ac-no-novo" data-t="pasta" ${base} title="Pasta dentro desta pasta">${icone('mais')}Pasta</button>` : ''}
           <button class="btn icon sm" data-a="ac-no-mover" data-d="-1" ${base} ${i === 0 ? 'disabled' : ''} aria-label="Subir">${icone('esq')}</button><button class="btn icon sm" data-a="ac-no-mover" data-d="1" ${base} ${i === lista.length - 1 ? 'disabled' : ''} aria-label="Descer">${icone('dir')}</button>
           <button class="btn icon sm" data-a="ac-no-editar" ${base} aria-label="Editar">${icone('editar')}</button></span></li>
         ${n.tipo === 'pasta' && (n.filhos || []).length ? htmlArvore(n.filhos, dono, modelo, nivel + 1) : ''}`;
@@ -115,20 +116,20 @@
     const est = d.estrutura;
     const achado = noId ? R.acharNo(est, noId) : null;
     const n = achado ? achado.no : { id: R.idNo(), tipo: tipo === 'pasta' ? 'pasta' : 'doc', nome: '', url: '', vazio: 'elaboracao', filhos: tipo === 'pasta' ? [] : undefined };
-    const ehLink = !noId && tipo === 'link';
     const novo = !noId;
-    const titulo = novo ? (n.tipo === 'pasta' ? 'Nova pasta' : ehLink ? 'Adicionar link' : 'Novo documento') : `Editar "${n.nome}"`;
+    const titulo = novo ? (n.tipo === 'pasta' ? 'Nova pasta' : 'Novo documento') : `Editar "${n.nome}"`;
     ui.abrirModal({
       titulo,
-      sub: n.tipo === 'pasta' ? 'Pasta do portal: agrupa documentos e outras pastas.' : d.modelo ? 'Posição de documento: o link é colado em cada serviço.' : 'Cole o link do arquivo ou da pasta no Drive.',
+      sub: d.modelo ? (n.tipo === 'pasta' ? 'Pasta: agrupa documentos e outras pastas. Os links são colados em cada serviço.' : 'Posição de documento: o link é colado em cada serviço.')
+        : n.tipo === 'pasta' ? 'Cole o link da pasta do Drive e o cliente abre direto nela. Também dá para pôr documentos e pastas dentro.' : 'Cole o link do arquivo ou da pasta no Drive.',
       corpo: `<label class="f req"><span>Nome (como o cliente vê)</span><input class="inp" name="nome" value="${esc(n.nome)}" placeholder="${n.tipo === 'pasta' ? 'Ex.: Projeto aprovado' : 'Ex.: Laudo, ART, Fotos da inspeção'}" ${novo ? 'autofocus' : ''}></label>
-        ${n.tipo === 'doc' && !d.modelo ? `<label class="f" style="margin-top:10px"><span>Link do Drive (arquivo ou pasta)${ehLink ? '' : ': pode ficar em branco por enquanto'}</span><input class="inp" name="url" value="${esc(n.url || '')}" placeholder="Cole aqui o link copiado no Drive" autocapitalize="off" spellcheck="false"></label><p class="small ac-detec" data-q="detec"></p>` : ''}
-        ${ehLink ? '' : `<div class="f" style="margin-top:12px"><span class="small" style="font-weight:500;color:var(--ink-2)">Enquanto estiver vazio</span><div class="ac-vazio">
+        ${!d.modelo ? `<label class="f" style="margin-top:10px"><span>${n.tipo === 'pasta' ? 'Link da pasta no Drive' : 'Link do Drive (arquivo ou pasta)'}: pode ficar em branco por enquanto</span><input class="inp" name="url" value="${esc(n.url || '')}" placeholder="Cole aqui o link copiado no Drive" autocapitalize="off" spellcheck="false"></label><p class="small ac-detec" data-q="detec"></p>` : ''}
+        ${`<div class="f" style="margin-top:12px"><span class="small" style="font-weight:500;color:var(--ink-2)">Enquanto estiver vazio</span><div class="ac-vazio">
           <label><input type="radio" name="vazio" value="elaboracao" ${n.vazio !== 'oculta' ? 'checked' : ''}> Aparece "Em elaboração"</label><label><input type="radio" name="vazio" value="oculta" ${n.vazio === 'oculta' ? 'checked' : ''}> Fica oculto</label></div></div>`}
         ${n.bloqueio && d.modelo ? '<p class="small muted" style="margin:12px 0 0">Em cada serviço novo esta pasta começa bloqueada. Você libera no próprio serviço, quando quiser.</p>' : ''}
         ${n.bloqueio && !d.modelo ? `<label class="chk" style="margin-top:12px"><input type="checkbox" name="bloq" ${n.bloqueio.ativo ? 'checked' : ''}> <span>Bloqueado para o cliente (os links não saem do sistema)</span></label>` : ''}${n.bloqueio ? `
           <label class="f" style="margin-top:8px"><span>Mensagem do bloqueio</span><textarea class="inp" name="msg" rows="3">${esc(n.bloqueio.msg || R.MSG_PRELIMINAR)}</textarea></label>` : ''}
-        ${n.tipo === 'doc' && !d.modelo ? '<p class="small muted" style="margin:12px 0 0">No Drive: botão direito > Compartilhar > Acesso geral: <b>Qualquer pessoa com o link</b>, como <b>Leitor</b> > Copiar link.</p>' : ''}`,
+        ${!d.modelo ? '<p class="small muted" style="margin:12px 0 0">No Drive: botão direito > Compartilhar > Acesso geral: <b>Qualquer pessoa com o link</b>, como <b>Leitor</b> > Copiar link.</p>' : ''}`,
       aoAbrir: (el) => {
         const u = $('[name=url]', el), det = $('[data-q=detec]', el), nome = $('[name=nome]', el);
         if (u && !novo) setTimeout(() => u.focus(), 30);
@@ -151,9 +152,9 @@
           const v = (k) => ($(`[name=${k}]`, m.el) ? $(`[name=${k}]`, m.el).value.trim() : '');
           if (!v('nome')) { $('[name=nome]', m.el).classList.add('erro'); return; }
           const url = v('url');
-          if (n.tipo === 'doc' && !d.modelo && (url || ehLink) && !R.drive(url)) { $('[name=url]', m.el).classList.add('erro'); return; }
+          if (!d.modelo && url && !R.drive(url)) { $('[name=url]', m.el).classList.add('erro'); return; }
           n.nome = v('nome');
-          if (n.tipo === 'doc' && !d.modelo) n.url = url;
+          if (!d.modelo) n.url = url;
           const vz = $('[name=vazio]:checked', m.el); if (vz) n.vazio = vz.value;
           if (n.bloqueio) n.bloqueio = { ativo: d.modelo ? true : !!($('[name=bloq]', m.el) || {}).checked, msg: v('msg') || R.MSG_PRELIMINAR };
           if (novo) {
