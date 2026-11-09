@@ -1718,8 +1718,6 @@
     const todas = obras();
     const clis = clientesArea();
     let usuarioMexido = !novo;
-    /** Usuário do acesso do cliente: SE + número da pasta (ex.: se130). */
-    const usuarioCli = (ids) => { const c = clis.find((x) => x.id === ids[0]); return !c ? '' : c.numero ? 'se' + c.numero : sugerirUsuario(c.nome).replace(/\./g, ''); };
     ui.abrirModal({
       titulo: novo ? 'Novo acesso' : `Editar o acesso ${a.perfil === 'cliente' ? 'do cliente' : 'de ' + a.nome}`,
       sub: novo ? 'Depois de salvar, o sistema mostra o código de acesso para você mandar.' : `Usuário ${esc(a.usuario)}${a.perfil === 'cliente' ? ` · ${esc(a.nome)}` : ''}`,
@@ -1735,17 +1733,16 @@
       aoAbrir: (m) => {
         const nome = $('[name=nome]', m), us = $('[name=usuario]', m), reg = $('[data-q=reg]', m);
         const cli = () => ($('[name=perfil]:checked', m) || {}).value === 'cliente';
-        const sugerir = () => { if (us && !usuarioMexido) us.value = cli() ? usuarioCli($$('[name=cli]:checked', m).map((x) => x.value)) : sugerirUsuario(nome.value); };
+        // engenharia: sugere pelo nome; cliente: fica em branco para você digitar
+        const sugerir = () => { if (us && !usuarioMexido) us.value = cli() ? '' : sugerirUsuario(nome.value); };
         const verPerfil = () => {
           const p = ($('[name=perfil]:checked', m) || {}).value;
           reg.hidden = p !== 'engenharia'; $('[data-q=clis]', m).hidden = p !== 'cliente';
           $$('[data-q=pessoa]', m).forEach((x) => { x.hidden = p === 'cliente'; });
           $('[data-q=obras-rot]', m).textContent = p === 'cliente' ? 'Outras obras liberadas (avulsas)' : 'Obras liberadas';
-          const dica = $('[data-q=us-dica]', m); if (dica) dica.textContent = p === 'cliente' ? 'Sugestão: SE e o número da pasta do cliente. Não dá para mudar depois.' : 'Letras minúsculas, números e ponto, sem espaço. Não dá para mudar depois.';
           sugerir();
         };
         $$('[name=perfil]', m).forEach((r) => r.addEventListener('change', verPerfil)); verPerfil();
-        $$('[name=cli]', m).forEach((x) => x.addEventListener('change', sugerir));
         if (us) {
           nome.addEventListener('input', sugerir);
           us.addEventListener('input', () => { usuarioMexido = true; us.value = us.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''); });
