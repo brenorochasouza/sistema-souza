@@ -47,6 +47,8 @@ window.RDO = (function () {
     ['outro', 'Outro serviço', 0],
   ];
   const nomeTipo = (k) => (TIPOS_SERVICO.find((t) => t[0] === k) || [k, 'Serviço'])[1];
+  /** Nome do tipo como foi salvo no serviço (a lista de tipos é editável no sistema). */
+  const tipoDe = (s) => (s && s.tipoNome) || nomeTipo(s && s.tipo);
   const OFERTAS = [
     { tipo: 'atc', titulo: 'Assessoria Técnica Condominial (ATC)', texto: 'Acompanhamento técnico contínuo do condomínio por engenheiro: orientação na manutenção e nas obras, inspeção anual das fachadas com drone e 25% de desconto nos laudos com ART.' },
     { tipo: 'inspecao_predial', titulo: 'Laudo de inspeção predial', texto: 'Avaliação completa do estado de conservação do condomínio, com as prioridades de manutenção e as recomendações técnicas.' },
@@ -384,7 +386,7 @@ window.RDO = (function () {
   return {
     ajustarZoom,
     esc, dataBR, deISO, isoData, somaDias, difDias, diaSemana, dataHora, num, fmtPct, dias,
-    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, OFERTAS, vencimento, situacaoVenc, linkWhats, MODELOS, MSG_PRELIMINAR, copiarEstrutura, estruturaDe, temConteudo, acharNo, idNo, resumoFinanceiro, GRUPOS_PADRAO, nomeDe, iconeTempo,
+    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, tipoDe, OFERTAS, vencimento, situacaoVenc, linkWhats, MODELOS, MSG_PRELIMINAR, copiarEstrutura, estruturaDe, temConteudo, acharNo, idNo, resumoFinanceiro, GRUPOS_PADRAO, nomeDe, iconeTempo,
     servicos, rotServ, rotEtapa, statusPct, ordemDiario, horas, fmtHoras, horario,
     progresso, prazo, dataRef, choveu, impraticavel, totalMao, aprovacao, impactoTxt, diarioHTML,
   };

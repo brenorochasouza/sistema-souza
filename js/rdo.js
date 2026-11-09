@@ -79,6 +79,7 @@
   const URL_CLIENTES = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portalClientes) || 'https://clientes.souzaengenharia.com/';
   const urlDe = (perfil) => (perfil === 'cliente' ? URL_CLIENTES : urlEntrada());
   const clientesArea = () => B.store.dados('portal', 'cliente').sort((x, y) => (Number(y.numero) || 0) - (Number(x.numero) || 0));
+  const rotaAcessos = () => (window.RdoApp ? '#/rdo/acessos' : '#/acessos');
   const nomeClienteArea = (id) => { const c = clientesArea().find((x) => x.id === id); return c ? `${c.numero ? c.numero + '. ' : ''}${c.nome}` : 'Cliente excluído'; };
   const logoSouza = () => `${RAIZ}img/logo.png?v=${Sis.VERSAO}`;
   /* perfis: master (você), engenharia (cria e edita diários) e cliente (só vê os aprovados, pela tela do portal) */
@@ -229,7 +230,7 @@
     const faltaCfg = master && (!cfg.ponte.url || !cfg.assinatura);
     const eu = B.eu() || {};
     el.innerHTML = `<div class="pagehead"><div><h1>Diário de obra</h1><p>${master ? `${todas.filter((o) => o.situacao !== 'concluida').length} em andamento` : `${esc(eu.nome || '')}${eu.funcao ? ' · ' + esc(eu.funcao) : ''}`}</p></div>
-      <div class="actions">${master ? `<a class="btn" href="#/rdo/acessos">${icone('chave')}Acessos</a><a class="btn" href="#/rdo/config">${icone('config')}Configurações</a><button class="btn primary" data-a="rdo-nova-obra">${icone('mais')}Nova obra</button>` : `<a class="btn" href="#/rdo/conta">${icone('config')}Minha conta</a>`}</div></div>
+      <div class="actions">${master ? `<a class="btn" href="${rotaAcessos()}">${icone('chave')}Acessos</a><a class="btn" href="#/rdo/config">${icone('config')}Configurações</a><button class="btn primary" data-a="rdo-nova-obra">${icone('mais')}Nova obra</button>` : `<a class="btn" href="#/rdo/conta">${icone('config')}Minha conta</a>`}</div></div>
       ${syncHTML()}
       ${faltaCfg ? `<a class="r-aviso" href="#/rdo/config">${icone('info')}<span>${[!cfg.ponte.url && 'Configure a ponte do Google Drive para guardar as fotos em alta qualidade', !cfg.assinatura && 'envie a imagem da sua assinatura'].filter(Boolean).join(' e ')}.</span></a>` : ''}
       ${ehEng() && !eu.assinatura ? `<a class="r-aviso" href="#/rdo/conta">${icone('info')}<span>Envie a imagem da sua assinatura em Minha conta. Ela sai nos diários que você enviar para aprovação.</span></a>` : ''}
@@ -1052,7 +1053,7 @@
       </div></section>
 
       <section class="card"><div class="hd"><div><h3>Quem acessa esta obra</h3><p>Cada pessoa entra em <a href="${esc(urlEntrada())}" target="_blank" rel="noopener">${esc(urlEntrada().replace(/^https?:\/\//, ''))}</a> com usuário e senha.</p></div>
-        <div class="actions"><a class="btn sm" href="#/rdo/acessos">${icone('chave')}Gerenciar acessos</a></div></div><div class="bd" data-q="acessos-obra"><p class="small muted">Carregando…</p></div>
+        <div class="actions"><a class="btn sm" href="${rotaAcessos()}">${icone('chave')}Gerenciar acessos</a></div></div><div class="bd" data-q="acessos-obra"><p class="small muted">Carregando…</p></div>
         ${codigosAntigos ? `<div class="bd r-cod-ant"><div><b>Códigos antigos do portal</b><small>Esta obra ainda abre em /clientesobras com o código da obra (só consulta). Desligue quando os clientes já tiverem usuário e senha.</small></div><button class="btn sm" data-a="rdo-cod-desligar">Desligar códigos antigos</button></div>` : ''}
       </section>
 
@@ -1669,7 +1670,7 @@
   const ACS = { lista: null, erro: '', carregando: false };
   const PERFIS = [
     ['engenharia', 'Engenharia', 'Cria e preenche os diários e envia para a sua aprovação, com a assinatura dele. Não aprova, não reabre e não mexe no cadastro da obra.'],
-    ['cliente', 'Cliente', 'Entra na área do cliente e vê os serviços, os documentos e as obras liberadas (só os diários aprovados). Não assina nem cria nada.'],
+    ['cliente', 'Cliente', 'Um acesso por cliente, para quem estiver na gestão (síndico, conselho, administradora). Vê os serviços, os documentos e as obras liberadas (só os diários aprovados). Não assina nem cria nada.'],
   ];
   const nomePerfil = (k) => (PERFIS.find((x) => x[0] === k) || [k, k])[1];
   async function carregarAcessos() {
@@ -1677,9 +1678,10 @@
     try { ACS.lista = (await B.rpc('rdo_acessos_lista')) || []; }
     catch (e) { ACS.erro = /Could not find|does not exist|schema cache/i.test(e.message || '') ? 'Falta rodar a versão nova do rdo_estrutura.sql no SQL Editor do projeto do Diário.' : (navigator.onLine ? e.message : 'Sem internet. Para ver e mudar os acessos é preciso estar conectado.'); }
     ACS.carregando = false;
-    if (Sis.rota().mod === 'rdo' && Sis.rota().partes[0] === 'acessos') Sis.desenhar(true);
+    const r = Sis.rota();
+    if ((r.mod === 'rdo' && r.partes[0] === 'acessos') || r.mod === 'acessos') Sis.desenhar(true);
   }
-  function telaAcessos(el) {
+  function telaAcessos(el, { modulo = false } = {}) {
     if (!ehMaster()) { el.innerHTML = '<div class="card"><div class="empty"><b>Só o acesso master gerencia os acessos.</b><a href="#/rdo">Voltar</a></div></div>'; return; }
     if (ACS.lista === null && !ACS.carregando && !ACS.erro) carregarAcessos();
     const lista = ACS.lista || [];
@@ -1694,8 +1696,12 @@
         <button class="btn sm ghost" data-a="rdo-ac-ativo" data-id="${esc(a.id)}">${a.ativo ? 'Desativar' : 'Reativar'}</button></div></div>`;
     const grupo = (k, tit, txt) => { const l = lista.filter((a) => a.perfil === k); return `<section class="r-ac-g"><div class="r-ac-gh"><h3>${tit} <span class="r-cont">${l.length}</span></h3><p class="small muted">${txt}</p></div>
       ${l.length ? `<div class="r-acs">${l.map(cartao).join('')}</div>` : `<div class="card"><div class="empty">${k === 'engenharia' ? 'Ninguém da engenharia ainda.' : 'Nenhum cliente ainda.'}</div></div>`}</section>`; };
-    el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/rdo" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>Acessos ao Diário de obra</b><span>Cada pessoa entra em ${esc(urlEntrada().replace(/^https?:\/\//, ''))} com usuário e senha</span></div>
-        <div class="actions"><button class="btn primary" data-a="rdo-ac-novo">${icone('mais')}<span>Novo acesso</span></button></div></div>
+    const semHttp = (u) => u.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const sub = `A engenharia entra em ${semHttp(urlEntrada())} e os clientes em ${semHttp(URL_CLIENTES)}`;
+    el.innerHTML = `${modulo ? `<div class="pagehead"><div><h1>Acessos</h1><p>${esc(sub)}</p></div>
+        <div class="actions"><button class="btn primary" data-a="rdo-ac-novo">${icone('mais')}Novo acesso</button></div></div>`
+      : `<div class="ob-topo"><a class="btn icon" href="#/rdo" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>Acessos</b><span>${esc(sub)}</span></div>
+        <div class="actions"><button class="btn primary" data-a="rdo-ac-novo">${icone('mais')}<span>Novo acesso</span></button></div></div>`}
       <div class="r-ac-m card"><div class="bd"><div><b>Master</b><small>Você. Pode tudo: cadastra as obras, aprova e reabre os diários e gerencia os acessos.</small></div><span class="chip ok">${esc(cfgRdo().responsavel.nome || B.conta())}</span></div></div>
       ${ACS.erro ? `<div class="r-aviso erro"><b>Não foi possível carregar os acessos</b><span>${esc(ACS.erro)}</span><button class="btn sm" data-a="rdo-ac-recarregar">Tentar de novo</button></div>` : ''}
       ${ACS.lista === null && !ACS.erro ? '<div class="empty">Carregando os acessos…</div>' : `${grupo('engenharia', 'Engenharia', PERFIS[0][2])}${grupo('cliente', 'Clientes', PERFIS[1][2])}`}`;
@@ -1712,30 +1718,43 @@
     const todas = obras();
     const clis = clientesArea();
     let usuarioMexido = !novo;
+    /** Usuário do acesso do cliente: SE + número da pasta (ex.: se130). */
+    const usuarioCli = (ids) => { const c = clis.find((x) => x.id === ids[0]); return !c ? '' : c.numero ? 'se' + c.numero : sugerirUsuario(c.nome).replace(/\./g, ''); };
     ui.abrirModal({
-      titulo: novo ? 'Novo acesso' : `Editar o acesso de ${a.nome}`,
-      sub: novo ? 'Depois de salvar, o sistema mostra o código de acesso para você mandar para a pessoa.' : `Usuário ${esc(a.usuario)}`,
+      titulo: novo ? 'Novo acesso' : `Editar o acesso ${a.perfil === 'cliente' ? 'do cliente' : 'de ' + a.nome}`,
+      sub: novo ? 'Depois de salvar, o sistema mostra o código de acesso para você mandar.' : `Usuário ${esc(a.usuario)}${a.perfil === 'cliente' ? ` · ${esc(a.nome)}` : ''}`,
       corpo: `<div class="grid2">
-        <label class="f req span2"><span>Nome</span><input class="inp" name="nome" value="${esc(a.nome)}" placeholder="Ex.: Matheus Villa Nova" ${novo ? 'autofocus' : ''}></label>
-        <label class="f"><span>Função</span><input class="inp" name="funcao" value="${esc(a.funcao)}" placeholder="Ex.: Assistente de engenharia, Síndico"></label>
+        <label class="f req span2" data-q="pessoa"><span>Nome</span><input class="inp" name="nome" value="${esc(a.nome)}" placeholder="Ex.: Matheus Villa Nova" ${novo && a.perfil !== 'cliente' ? 'autofocus' : ''}></label>
+        <label class="f" data-q="pessoa"><span>Função</span><input class="inp" name="funcao" value="${esc(a.funcao)}" placeholder="Ex.: Assistente de engenharia"></label>
         <label class="f" data-q="reg"><span>Registro profissional (opcional)</span><input class="inp" name="registro" value="${esc(a.registro)}" placeholder="Ex.: CREA-BA 000000000-0"></label>
-        ${novo ? `<label class="f req span2"><span>Usuário (para entrar)</span><input class="inp" name="usuario" value="" autocapitalize="off" spellcheck="false" placeholder="Ex.: matheus.villanova"><small class="muted">Letras minúsculas, números e ponto, sem espaço. Não dá para mudar depois.</small></label>` : ''}
+        ${novo ? `<label class="f req span2"><span>Usuário (para entrar)</span><input class="inp" name="usuario" value="" autocapitalize="off" spellcheck="false" placeholder="Ex.: matheus.villanova"><small class="muted" data-q="us-dica">Letras minúsculas, números e ponto, sem espaço. Não dá para mudar depois.</small></label>` : ''}
       </div>
       <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)">Tipo de acesso</span><div class="r-perfis">${PERFIS.map(([k, n, t]) => `<label class="r-perfil"><input type="radio" name="perfil" value="${k}" ${a.perfil === k ? 'checked' : ''}><span><b>${n}</b><small>${t}</small></span></label>`).join('')}</div></div>
-      <div class="f" data-q="clis"><span class="small" style="font-weight:500;color:var(--ink-2)">Clientes liberados (área do cliente)</span>${clis.length ? `<div class="r-ac-obras">${clis.map((c) => `<label class="chk"><input type="checkbox" name="cli" value="${esc(c.id)}" ${(a.clientes || []).includes(c.id) ? 'checked' : ''}> <span>${esc(`${c.numero ? c.numero + '. ' : ''}${c.nome}`)}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhum cliente na área do cliente ainda.</p>'}<small class="muted">A pessoa vê os serviços, os documentos e as obras ligadas a estes clientes.</small></div>
+      <div class="f" data-q="clis"><span class="small" style="font-weight:500;color:var(--ink-2)">Clientes liberados (área do cliente)</span>${clis.length ? `<div class="r-ac-obras">${clis.map((c) => `<label class="chk"><input type="checkbox" name="cli" value="${esc(c.id)}" ${(a.clientes || []).includes(c.id) ? 'checked' : ''}> <span>${esc(`${c.numero ? c.numero + '. ' : ''}${c.nome}`)}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhum cliente na área do cliente ainda.</p>'}<small class="muted">Quem entra com este acesso vê os serviços, os documentos e as obras ligadas a estes clientes. Qualquer pessoa da gestão pode usar o mesmo acesso.</small></div>
       <div class="f"><span class="small" style="font-weight:500;color:var(--ink-2)" data-q="obras-rot">Obras liberadas</span>${todas.length ? `<div class="r-ac-obras">${todas.map((o) => `<label class="chk"><input type="checkbox" name="obra" value="${esc(o.id)}" ${(a.obras || []).includes(o.id) ? 'checked' : ''}> <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.situacao === 'concluida' ? ' <small class="muted">(concluída)</small>' : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra cadastrada ainda.</p>'}</div>`,
       aoAbrir: (m) => {
         const nome = $('[name=nome]', m), us = $('[name=usuario]', m), reg = $('[data-q=reg]', m);
-        const verPerfil = () => { const p = ($('[name=perfil]:checked', m) || {}).value; reg.hidden = p !== 'engenharia'; $('[data-q=clis]', m).hidden = p !== 'cliente'; $('[data-q=obras-rot]', m).textContent = p === 'cliente' ? 'Outras obras liberadas (avulsas)' : 'Obras liberadas'; };
+        const cli = () => ($('[name=perfil]:checked', m) || {}).value === 'cliente';
+        const sugerir = () => { if (us && !usuarioMexido) us.value = cli() ? usuarioCli($$('[name=cli]:checked', m).map((x) => x.value)) : sugerirUsuario(nome.value); };
+        const verPerfil = () => {
+          const p = ($('[name=perfil]:checked', m) || {}).value;
+          reg.hidden = p !== 'engenharia'; $('[data-q=clis]', m).hidden = p !== 'cliente';
+          $$('[data-q=pessoa]', m).forEach((x) => { x.hidden = p === 'cliente'; });
+          $('[data-q=obras-rot]', m).textContent = p === 'cliente' ? 'Outras obras liberadas (avulsas)' : 'Obras liberadas';
+          const dica = $('[data-q=us-dica]', m); if (dica) dica.textContent = p === 'cliente' ? 'Sugestão: SE e o número da pasta do cliente. Não dá para mudar depois.' : 'Letras minúsculas, números e ponto, sem espaço. Não dá para mudar depois.';
+          sugerir();
+        };
         $$('[name=perfil]', m).forEach((r) => r.addEventListener('change', verPerfil)); verPerfil();
+        $$('[name=cli]', m).forEach((x) => x.addEventListener('change', sugerir));
         if (us) {
-          nome.addEventListener('input', () => { if (!usuarioMexido) us.value = sugerirUsuario(nome.value); });
+          nome.addEventListener('input', sugerir);
           us.addEventListener('input', () => { usuarioMexido = true; us.value = us.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''); });
         }
       },
       botoes: [
         ...(novo ? [] : [{ rot: 'Excluir acesso', classe: 'danger', esq: true, acao: async (m) => {
-          const ok = await ui.confirmar({ titulo: `Excluir o acesso de ${a.nome}?`, msg: 'A pessoa deixa de entrar na hora. Os diários que ela fez continuam na obra. Para só bloquear por um tempo, use Desativar.', ok: 'Excluir', perigo: true });
+          const ok = await ui.confirmar(a.perfil === 'cliente' ? { titulo: `Excluir o acesso ${a.usuario}?`, msg: 'Quem usa este acesso deixa de entrar na hora. Para só bloquear por um tempo, use Desativar.', ok: 'Excluir', perigo: true }
+            : { titulo: `Excluir o acesso de ${a.nome}?`, msg: 'A pessoa deixa de entrar na hora. Os diários que ela fez continuam na obra. Para só bloquear por um tempo, use Desativar.', ok: 'Excluir', perigo: true });
           if (!ok) return;
           try { await B.rpc('rdo_acesso_excluir', { p_id: a.id }); m.fechar(); ui.toast('Acesso excluído.'); ACS.lista = null; Sis.desenhar(true); }
           catch (e) { ui.toast(e.message, 'erro'); }
@@ -1746,6 +1765,13 @@
           const perfil = ($('[name=perfil]:checked', m.el) || {}).value;
           const dados = { id: a.id || null, nome: v('nome'), funcao: v('funcao'), registro: perfil === 'engenharia' ? v('registro') : '', perfil, obras: $$('[name=obra]:checked', m.el).map((x) => x.value), clientes: perfil === 'cliente' ? $$('[name=cli]:checked', m.el).map((x) => x.value) : [], ativo: a.ativo };
           if (novo) dados.usuario = v('usuario');
+          if (perfil === 'cliente') {
+            // acesso do cliente, não de uma pessoa: o nome é o do cliente (ou da obra)
+            const nomes = dados.clientes.map((id) => (clis.find((c) => c.id === id) || {}).nome).filter(Boolean).concat(dados.clientes.length ? [] : dados.obras.map((id) => (todas.find((o) => o.id === id) || {}).nome).filter(Boolean));
+            if (!nomes.length) { ui.toast('Marque o cliente deste acesso.'); return; }
+            dados.nome = nomes.length > 2 ? `${nomes.slice(0, 2).join(', ')} e mais ${nomes.length - 2}` : nomes.join(' e ');
+            dados.funcao = '';
+          }
           if (!dados.nome) { $('[name=nome]', m.el).classList.add('erro'); return; }
           if (novo && !dados.usuario) { $('[name=usuario]', m.el).classList.add('erro'); return; }
           if (!navigator.onLine) { ui.toast('Sem internet. Para criar ou mudar acessos é preciso estar conectado.'); return; }
@@ -1771,9 +1797,11 @@
   }
   /** Mostra o código de acesso uma única vez, com a mensagem pronta para o WhatsApp. */
   function mostrarCodigo(a, cod, novo) {
-    const txt = `Olá, ${String(a.nome).split(/\s+/)[0]}! ${novo ? 'Seu acesso' : 'Seu novo código de acesso'} ${a.perfil === 'cliente' ? 'à Área do cliente' : 'ao Diário de obra'} da Souza Engenharia:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\n${a.perfil === 'engenharia' ? 'No primeiro acesso, troque o código por uma senha sua em "Minha conta" e envie a imagem da sua assinatura.' : 'Depois de entrar, você pode trocar o código por uma senha sua.'}`;
+    const txt = a.perfil === 'cliente'
+      ? `Olá! ${novo ? 'Este é o acesso' : 'Este é o novo código de acesso'} do ${a.nome} à Área do cliente da Souza Engenharia, com os serviços, os documentos e os diários de obra:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\nO acesso é do condomínio: qualquer pessoa da gestão pode usar.${novo ? '' : ' O código anterior deixou de funcionar.'}`
+      : `Olá, ${String(a.nome).split(/\s+/)[0]}! ${novo ? 'Seu acesso' : 'Seu novo código de acesso'} ao Diário de obra da Souza Engenharia:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\nNo primeiro acesso, troque o código por uma senha sua em "Minha conta" e envie a imagem da sua assinatura.`;
     ui.abrirModal({
-      titulo: novo ? 'Acesso criado' : 'Novo código gerado', sub: `Mande para ${esc(a.nome)}. ${novo ? '' : 'O código anterior já não funciona. '}Este código não aparece de novo: se perder, gere outro.`,
+      titulo: novo ? 'Acesso criado' : 'Novo código gerado', sub: `Mande para ${a.perfil === 'cliente' ? 'a gestão do ' : ''}${esc(a.nome)}. ${novo ? '' : 'O código anterior já não funciona. '}Este código não aparece de novo: se perder, gere outro.`,
       corpo: `<div class="r-codbox"><div><span>Endereço</span><b>${esc(urlDe(a.perfil).replace(/^https?:\/\//, '').replace(/\/$/, ''))}</b></div><div><span>Usuário</span><b>${esc(a.usuario)}</b></div><div><span>Código de acesso</span><b class="r-cod-v" data-q="cod">${esc(cod)}</b></div></div>`,
       botoes: [{ rot: 'Fechar' }, { rot: 'Copiar mensagem', classe: 'primary', acao: async () => {
         try { await navigator.clipboard.writeText(txt); ui.toast('Mensagem copiada. É só colar no WhatsApp.'); }
@@ -1783,18 +1811,23 @@
   }
   const acessoPor = (id) => (ACS.lista || []).find((x) => x.id === id);
   /** Para a área do cliente abrir "Novo acesso" já com o cliente marcado. */
-  window.RdoAcessos = { novo: (pre) => modalAcesso(null, pre) };
+  window.RdoAcessos = {
+    novo: (pre) => modalAcesso(null, pre),
+    tela: telaAcessos,
+    /** Lista atualizada (também deixa pronta para os botões de código e desativar). */
+    carregar: async () => { if (ACS.lista === null) { ACS.lista = (await B.rpc('rdo_acessos_lista')) || []; } return ACS.lista; },
+  };
   A['rdo-ac-novo'] = () => { if (!obras().length && !clientesArea().length) { ui.toast('Cadastre uma obra ou um cliente na área do cliente antes de criar acessos.'); return; } modalAcesso(null); };
   A['rdo-ac-editar'] = (b) => { const a = acessoPor(b.dataset.id); if (a) modalAcesso(a); };
   A['rdo-ac-ativo'] = async (b) => {
     const a = acessoPor(b.dataset.id); if (!a) return;
-    if (a.ativo && !(await ui.confirmar({ titulo: `Desativar o acesso de ${a.nome}?`, msg: 'A pessoa deixa de ver as obras na hora, em todos os aparelhos. Dá para reativar depois.', ok: 'Desativar', perigo: true }))) return;
+    if (a.ativo && !(await ui.confirmar({ titulo: a.perfil === 'cliente' ? `Desativar o acesso ${a.usuario}?` : `Desativar o acesso de ${a.nome}?`, msg: a.perfil === 'cliente' ? 'Quem usa este acesso deixa de ver a área do cliente na hora, em todos os aparelhos. Dá para reativar depois.' : 'A pessoa deixa de ver as obras na hora, em todos os aparelhos. Dá para reativar depois.', ok: 'Desativar', perigo: true }))) return;
     try { await B.rpc('rdo_acesso_salvar', { p: Object.assign({}, a, { ativo: !a.ativo }) }); ui.toast(a.ativo ? 'Acesso desativado.' : 'Acesso reativado.'); ACS.lista = null; Sis.desenhar(true); }
     catch (e) { ui.toast(e.message, 'erro'); }
   };
   A['rdo-ac-codigo'] = async (b) => {
     const a = acessoPor(b.dataset.id); if (!a) return;
-    if (a.ativado && !(await ui.confirmar({ titulo: `Gerar um código novo para ${a.nome}?`, msg: 'O código ou a senha atual deixa de funcionar na hora. Use quando a pessoa esquecer a senha.', ok: 'Gerar código' }))) return;
+    if (a.ativado && !(await ui.confirmar({ titulo: a.perfil === 'cliente' ? `Gerar um código novo para ${a.usuario}?` : `Gerar um código novo para ${a.nome}?`, msg: a.perfil === 'cliente' ? 'O código atual deixa de funcionar na hora. Use quando mudar a gestão ou o código se perder.' : 'O código ou a senha atual deixa de funcionar na hora. Use quando a pessoa esquecer a senha.', ok: 'Gerar código' }))) return;
     const cod = gerarCodigo();
     try {
       if (a.ativado) await B.rpc('rdo_acesso_senha', { p_id: a.id, p_senha: cod });
@@ -1859,7 +1892,7 @@
     if (!B.conectado()) { if (window.RdoApp) window.RdoApp.entrada(); else telaConectar(el); return; }
     if (!B.perfil() || B.perfil() === 'cliente') { el.innerHTML = '<div class="card"><div class="empty"><b>Este acesso não abre o editor do Diário de obra</b>Entre pelo endereço do Diário para ver os diários aprovados.</div></div>'; return; }
     if (!partes[0]) telaLista(el);
-    else if (partes[0] === 'acessos') telaAcessos(el);
+    else if (partes[0] === 'acessos') { if (window.RdoApp) telaAcessos(el); else location.replace('#/acessos'); }
     else if (partes[0] === 'conta') telaConta(el);
     else if (partes[0] === 'config') { if (ehMaster()) telaConfig(el); else telaConta(el); }
     else if (partes[1] === 'd' && partes[2]) telaDiario(el, partes[0], partes[2]);

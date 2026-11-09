@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.8`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.9`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -199,7 +199,7 @@
   const caminho = (s, pais) => [nomeSv(s)].concat(pais.map((p) => p.nome)).join(' › ');
   const temElab = (l) => (l || []).some((n) => !bloqueado(n) && (n.tipo === 'pasta' ? (!R.temConteudo(n) && n.vazio !== 'oculta') || temElab(n.filhos) : !n.url && n.vazio !== 'oculta'));
   const baseSv = (c, s) => `#/c/${enc(c.id)}/s/${enc(s.id)}`;
-  const nomeSv = (s) => s.titulo || R.nomeTipo(s.tipo);
+  const nomeSv = (s) => s.titulo || R.tipoDe(s);
   const hojeISO = () => (R.isoData ? R.isoData(new Date()) : new Date().toISOString().slice(0, 10));
   function linhaNo(n, base) {
     if (bloqueado(n)) return `<li class="bloq"><div>${icone(IC.cadeado)}<span><b>${esc(n.nome)}</b><small>${esc(n.bloqueio.msg || R.MSG_PRELIMINAR)}</small></span></div></li>`;
@@ -234,7 +234,7 @@
     if (n && el) partes.push('outros em elaboração');
     if (ps.length) partes.push(`${ps.filter((p) => p.pago).length} de ${ps.length} parcelas pagas`);
     return `<a class="card pt-sv" href="${baseSv(c, s)}"><span class="pt-sv-ic">${icone(IC.pasta)}</span><span class="pt-sv-t"><b>${esc(nomeSv(s))}</b>
-      <small>${esc([R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</small><small>${esc(partes.join(' · '))}</small></span>
+      <small>${esc([R.tipoDe(s), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</small><small>${esc(partes.join(' · '))}</small></span>
       <span class="chip ${s.situacao === 'entregue' ? 'ok' : 'atencao'}">${s.situacao === 'entregue' ? 'Entregue' : 'Em andamento'}</span>${icone(IC.dir)}</a>`;
   }
   function telaCliente(cid) {
@@ -264,7 +264,7 @@
   /** Página do serviço (pid vazio) ou de uma pasta dele. */
   function telaServico(c, s, pid) {
     const raiz = R.estruturaDe(s), base = baseSv(c, s);
-    let lista = raiz, titulo = nomeSv(s), sub = [R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '), volta = '#/c/' + enc(c.id);
+    let lista = raiz, titulo = nomeSv(s), sub = [R.tipoDe(s), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '), volta = '#/c/' + enc(c.id);
     if (pid) {
       const a = R.acharNo(raiz, pid);
       if (!a || a.no.tipo !== 'pasta' || bloqueado(a.no) || a.pais.some(bloqueado)) { location.replace(base); return; }

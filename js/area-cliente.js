@@ -31,6 +31,70 @@
   const obrasRdo = () => B.store.dados('obras', 'obra').sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
   const rotulo = (c) => `${c.numero ? c.numero + '. ' : ''}${c.nome}`;
 
+  /* ---------- tipos de serviço (lista editável) ----------
+     Registro "tipos-servico" (tipo config): [{ k, nome, anos, oculto }] na ordem que você deixou.
+     Os prontos mantêm a chave (modelos, renovações e ofertas usam); os seus ganham uma chave nova.
+     O nome vai junto em cada serviço (tipoNome), para o cliente ver o mesmo nome. */
+  const ID_TIPOS = 'tipos-servico';
+  function tipos() {
+    const r = B.store.get(T, ID_TIPOS);
+    const base = R.TIPOS_SERVICO.map(([k, nome, anos]) => ({ k, nome, anos: anos ? String(anos) : '', pronto: true }));
+    const meus = r && Array.isArray(r.dados.tipos) ? r.dados.tipos : [];
+    const lista = meus.length ? meus.map((t) => Object.assign({}, t, { pronto: base.some((b) => b.k === t.k) })) : base;
+    base.forEach((b) => { if (!lista.some((t) => t.k === b.k)) lista.push(b); });
+    return lista;
+  }
+  const tipoPor = (k) => tipos().find((t) => t.k === k) || null;
+  const nomeTipo = (k) => { const t = tipoPor(k); return t ? t.nome : R.nomeTipo(k); };
+  const opcoesTipo = (atual) => tipos().filter((t) => !t.oculto || t.k === atual).map((t) => `<option value="${esc(t.k)}" ${t.k === atual ? 'selected' : ''}>${esc(t.nome)}</option>`).join('');
+  function modalTipos(aoSalvar) {
+    const linha = (t) => `<div class="ac-tp ${t.oculto ? 'off' : ''}" data-k="${esc(t.k)}" data-pronto="${t.pronto ? '1' : ''}">
+      <input class="inp" name="tnome" value="${esc(t.nome)}" placeholder="Ex.: Laudo de estanqueidade" aria-label="Nome do tipo">
+      <input class="inp" name="tanos" inputmode="numeric" value="${esc(t.anos || '')}" placeholder="Não vence" aria-label="Renova a cada (anos)">
+      <span class="ac-tp-a"><button type="button" class="btn icon sm" data-tp="sobe" aria-label="Subir">${icone('cima')}</button><button type="button" class="btn icon sm" data-tp="desce" aria-label="Descer">${icone('baixo')}</button>
+      <button type="button" class="btn sm ghost" data-tp="${t.pronto ? 'ocultar' : 'excluir'}">${t.pronto ? (t.oculto ? 'Mostrar' : 'Ocultar') : 'Excluir'}</button></span></div>`;
+    ui.abrirModal({
+      titulo: 'Tipos de serviço', sub: 'O nome é o que o cliente vê. Renova a cada: o padrão quando você escolhe o tipo. Tipo oculto sai da lista; os serviços que já usam continuam iguais.',
+      corpo: `<div class="ac-tp ac-tp-cab"><span>Nome</span><span>Renova a cada (anos)</span><span></span></div><div class="ac-tps" data-q="tps">${tipos().map(linha).join('')}</div>
+        <button type="button" class="btn sm" data-tp="novo" style="margin-top:10px">${icone('mais')}Novo tipo</button>`,
+      aoAbrir: (el) => {
+        const box = $('[data-q=tps]', el);
+        el.addEventListener('click', (ev) => {
+          const b = ev.target.closest('[data-tp]'); if (!b) return;
+          ev.preventDefault();
+          const row = b.closest('.ac-tp'), acao = b.dataset.tp;
+          if (acao === 'novo') { box.insertAdjacentHTML('beforeend', linha({ k: 'tp-' + uid(), nome: '', anos: '' })); box.lastElementChild.querySelector('[name=tnome]').focus(); return; }
+          if (acao === 'sobe' && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+          if (acao === 'desce' && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
+          if (acao === 'ocultar') { row.classList.toggle('off'); b.textContent = row.classList.contains('off') ? 'Mostrar' : 'Ocultar'; }
+          if (acao === 'excluir') row.remove();
+        });
+      },
+      botoes: [{ rot: 'Cancelar' }, { rot: 'Salvar lista', classe: 'primary', acao: (m) => {
+        const out = [];
+        for (const row of $$('.ac-tps .ac-tp', m.el)) {
+          const nome = $('[name=tnome]', row).value.trim();
+          if (!nome) { if (!row.dataset.pronto) continue; $('[name=tnome]', row).classList.add('erro'); $('[name=tnome]', row).focus(); return; }
+          const t = { k: row.dataset.k, nome, anos: $('[name=tanos]', row).value.replace(/\D/g, '') };
+          if (row.classList.contains('off')) t.oculto = true;
+          out.push(t);
+        }
+        // tipo seu excluído mas usado em algum serviço: fica oculto
+        const usados = new Set(B.store.lista(T, 'servico').map((r) => r.dados.tipo));
+        tipos().filter((t) => !t.pronto && !out.some((o) => o.k === t.k) && usados.has(t.k)).forEach((t) => out.push({ k: t.k, nome: t.nome, anos: t.anos || '', oculto: true }));
+        B.store.salvar(T, ID_TIPOS, 'config', { tipos: out }, null);
+        // o nome novo vai para os serviços (o cliente vê o mesmo nome)
+        for (const r of B.store.lista(T, 'servico')) {
+          const t = out.find((x) => x.k === r.dados.tipo);
+          if (t && r.dados.tipoNome !== t.nome) B.store.salvar(T, r.id, 'servico', Object.assign({}, r.dados, { tipoNome: t.nome }), r.grupo);
+        }
+        m.fechar();
+        ui.toast('Lista de tipos salva.');
+        if (aoSalvar) aoSalvar();
+      } }],
+    });
+  }
+
   /* ---------- modelos ---------- */
   const modelosSalvos = () => B.store.dados(T, 'modelo');
   /** Modelos disponíveis: os prontos (com a sua versão, se você mudou) e os que você salvou. */
@@ -74,7 +138,7 @@
      excluído: o laudo sai (se foi criado daqui) ou volta a ser avulso (se já existia).
      Um ciclo novo do mesmo laudo para o mesmo cliente fecha o anterior como renovado. */
   const TIPO_RENOV = { spda: 'Laudo de SPDA', inspecao_predial: 'Inspeção Predial', fachada: 'Inspeção de Fachada', avcb: 'AVCB' };
-  const tipoRenov = (k) => TIPO_RENOV[k] || R.nomeTipo(k);
+  const tipoRenov = (k) => TIPO_RENOV[k] || nomeTipo(k);
   const PERTO = 180; // dias: entregas mais próximas que isso são o mesmo ciclo
   const diasEntre = (a, b) => Math.round((Sis.util.deISO(b) - Sis.util.deISO(a)) / 86400000);
   const renova = (d) => !!(d && d.situacao === 'entregue' && /^\d{4}-\d{2}-\d{2}$/.test(d.data || '') && Number(d.renovaAnos) >= 1);
@@ -257,7 +321,7 @@
     const lista = q ? todos.filter((c) => norm(rotulo(c)).includes(q)) : todos;
     const ss = B.store.lista(T, 'servico');
     el.innerHTML = `<div class="pagehead"><div><h1>Área do cliente</h1><p>${todos.length} ${todos.length === 1 ? 'cliente' : 'clientes'} · os clientes entram em <a href="${esc(URL_CLIENTES)}" target="_blank" rel="noopener">${esc(URL_CLIENTES.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a></p></div>
-      <div class="actions"><a class="btn" href="#/area/modelos">${icone('lista')}Modelos</a><a class="btn" href="#/rdo/acessos">${icone('chave')}Acessos</a><button class="btn primary" data-a="ac-cli-novo">${icone('mais')}Novo cliente</button></div></div>
+      <div class="actions"><a class="btn" href="#/area/modelos">${icone('lista')}Modelos</a><a class="btn" href="#/acessos">${icone('chave')}Acessos</a><button class="btn primary" data-a="ac-cli-novo">${icone('mais')}Novo cliente</button></div></div>
       <div class="ac-busca"><input class="inp" type="search" placeholder="Buscar pelo número ou nome" value="${esc((Sis.rota().params || {}).q || '')}" data-ac-busca></div>
       ${lista.length ? `<div class="ac-clis">${lista.map((c) => {
         const sv = ss.filter((r) => r.grupo === c.id);
@@ -286,8 +350,8 @@
     const venc = R.vencimento(s), sv = R.situacaoVenc(venc, hojeISO());
     const sit = SITUACOES.find((x) => x[0] === s.situacao) || SITUACOES[0];
     return `<section class="card ac-sv" data-sv="${esc(s.id)}"><div class="hd"><div>
-        <h3>${esc(s.titulo || R.nomeTipo(s.tipo))}</h3>
-        <p>${esc([R.nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</p></div>
+        <h3>${esc(s.titulo || nomeTipo(s.tipo))}</h3>
+        <p>${esc([nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</p></div>
         <div class="actions"><span class="chip ${sit[2]}">${sit[1]}</span>${venc ? (() => { const cls = `chip ${sv.estado === 'vencido' ? 'estourado' : sv.estado === 'perto' ? 'atencao' : 'neutro'}`, txt = `${sv.estado === 'vencido' ? 'Venceu em' : 'Vence em'} ${dataBR(venc)}`; return laudoDo(s.id) ? `<a class="${cls} ac-renov" href="#/renovacoes" title="Está nas Renovações">${icone('repetir')}${txt}</a>` : `<span class="${cls}">${txt}</span>`; })() : ''}
           <button class="btn icon sm" data-a="ac-sv-editar" data-id="${esc(s.id)}" aria-label="Editar serviço" title="Editar serviço">${icone('editar')}</button></div></div>
       <div class="bd">${htmlFinanceiro(s)}
@@ -310,8 +374,8 @@
       <section class="card"><div class="hd"><div><h3>Obras (Diário de obra)</h3><p>As obras marcadas aparecem para o cliente com os diários aprovados.</p></div></div>
         <div class="bd">${obs.length ? `<div class="ac-obras">${obs.map((o) => `<label class="chk"><input type="checkbox" data-ac-obra="${esc(o.id)}" ${o.areaCliente === c.id ? 'checked' : ''} ${o.areaCliente && o.areaCliente !== c.id ? 'disabled' : ''}>
           <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.areaCliente && o.areaCliente !== c.id ? ` <small class="muted">(ligada a ${esc((cliente(o.areaCliente) || { nome: 'outro cliente' }).nome)})</small>` : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra no Diário de obra.</p>'}</div></section>
-      <section class="card"><div class="hd"><div><h3>Quem acessa</h3><p>Cada pessoa vê tudo o que estiver liberado para este cliente.</p></div>
-        <div class="actions"><button class="btn sm" data-a="ac-acesso-novo" data-c="${esc(c.id)}">${icone('mais')}Novo acesso</button></div></div><div class="bd" data-q="quem"><p class="small muted">Carregando…</p></div></section>
+      <section class="card"><div class="hd"><div><h3>Acesso do cliente</h3><p>Um acesso do condomínio, não de uma pessoa: qualquer um da gestão entra com ele em ${esc(URL_CLIENTES.replace(/^https?:\/\//, '').replace(/\/$/, ''))}.</p></div></div>
+        <div class="bd" data-q="quem"><p class="small muted">Carregando…</p></div></section>
       <div class="ac-pe"><button class="btn danger" data-a="ac-cli-x" data-id="${esc(c.id)}">${icone('lixo')}Excluir cliente</button></div>`;
     $$('[data-ac-obra]', el).forEach((cb) => cb.addEventListener('change', () => {
       const r = B.store.get('obras', cb.dataset.acObra); if (!r) return;
@@ -326,10 +390,14 @@
     const alvo = () => $('[data-q="quem"]');
     if (!navigator.onLine) { if (alvo()) alvo().innerHTML = '<p class="small muted">Sem internet para mostrar os acessos agora.</p>'; return; }
     try {
-      const l = ((await B.rpc('rdo_acessos_lista')) || []).filter((a) => (a.clientes || []).includes(c.id));
+      const todos = window.RdoAcessos ? await window.RdoAcessos.carregar() : (await B.rpc('rdo_acessos_lista')) || [];
+      const l = todos.filter((a) => (a.clientes || []).includes(c.id));
       if (!alvo()) return;
-      alvo().innerHTML = l.length ? `<div class="r-ac-mini">${l.map((a) => `<span class="r-ac-p ${a.ativo ? '' : 'off'}">${icone('pessoa')}<b>${esc(a.nome)}</b><small>${esc(a.funcao || 'Cliente')}${a.ativo ? '' : ' · desativado'}</small></span>`).join('')}</div>`
-        : '<p class="small muted">Ninguém ainda. Use "Novo acesso" para criar o login do síndico ou da administradora.</p>';
+      const sit = (a) => (!a.ativo ? 'Desativado' : !a.ativado ? 'Login não criado' : a.ultimo_acesso ? `Último acesso ${R.dataHora(a.ultimo_acesso)}` : 'Ainda não entrou');
+      alvo().innerHTML = l.length ? l.map((a) => `<div class="ac-acs ${a.ativo ? '' : 'off'}">${icone('chave')}<span class="ac-acs-t"><b>Usuário <code>${esc(a.usuario)}</code></b>
+          <small>${esc(sit(a))}${(a.clientes || []).length > 1 ? ` · vale também para ${a.clientes.length - 1} ${a.clientes.length === 2 ? 'outro cliente' : 'outros clientes'}` : ''}${a.funcao ? ` · ${esc(a.nome)}` : ''}</small></span>
+          <span class="ac-no-a"><button class="btn sm" data-a="rdo-ac-codigo" data-id="${esc(a.id)}">${icone('chave')}${a.ativado ? 'Novo código' : 'Criar login'}</button><button class="btn sm ghost" data-a="rdo-ac-ativo" data-id="${esc(a.id)}">${a.ativo ? 'Desativar' : 'Reativar'}</button></span></div>`).join('')
+        : `<p class="small muted" style="margin-top:0">Este cliente ainda não tem acesso.</p><div class="actions"><button class="btn sm primary" data-a="ac-acesso-novo" data-c="${esc(c.id)}">${icone('mais')}Criar acesso</button></div>`;
     } catch (e) { if (alvo()) alvo().innerHTML = `<p class="small muted">Não foi possível carregar os acessos: ${esc(e.message)}</p>`; }
   }
 
@@ -338,14 +406,14 @@
     el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/area" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>Modelos de organização</b><span>A estrutura que já vem pronta quando você cria um serviço</span></div>
         <div class="actions"><button class="btn primary" data-a="ac-mod-novo">${icone('mais')}<span>Novo modelo</span></button></div></div>
       <div class="ac-clis">${ms.map((m) => `<a class="card ac-cli" href="#/area/modelos/${esc(m.id)}"><span class="ac-num">${icone(m.pronto ? 'check' : 'lista')}</span><span class="ac-cli-t"><b>${esc(m.nome)}</b>
-        <small>${m.tipoPadrao ? `Padrão para ${esc(R.nomeTipo(m.tipoPadrao))}` : 'Escolhido na hora de criar o serviço'} · ${contar(m.estrutura)} posições${m.pronto ? (m.mudado ? ' · modelo pronto, alterado por você' : ' · modelo pronto') : ''}</small></span>${icone('dir')}</a>`).join('')}</div>
+        <small>${m.tipoPadrao ? `Padrão para ${esc(nomeTipo(m.tipoPadrao))}` : 'Escolhido na hora de criar o serviço'} · ${contar(m.estrutura)} posições${m.pronto ? (m.mudado ? ' · modelo pronto, alterado por você' : ' · modelo pronto') : ''}</small></span>${icone('dir')}</a>`).join('')}</div>
       <p class="small muted" style="margin-top:12px">Mudanças num modelo valem para os próximos serviços. Os serviços já criados não mudam.</p>`;
   }
   const contar = (l) => (l || []).reduce((t, n) => t + 1 + (n.tipo === 'pasta' ? contar(n.filhos) : 0), 0);
   function telaModelo(el, id) {
     const m = modelo(id);
     if (!m) { el.innerHTML = '<div class="card"><div class="empty"><b>Modelo não encontrado</b><a href="#/area/modelos">Voltar</a></div></div>'; return; }
-    el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/area/modelos" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>${esc(m.nome)}</b><span>${m.tipoPadrao ? `Padrão para ${esc(R.nomeTipo(m.tipoPadrao))}` : 'Modelo seu'}</span></div>
+    el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/area/modelos" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>${esc(m.nome)}</b><span>${m.tipoPadrao ? `Padrão para ${esc(nomeTipo(m.tipoPadrao))}` : 'Modelo seu'}</span></div>
         <div class="actions"><button class="btn" data-a="ac-mod-editar" data-id="${esc(m.id)}">${icone('editar')}<span>Nome e tipo</span></button></div></div>
       <section class="card"><div class="hd"><div><h3>Estrutura</h3><p>O que o cliente vai encontrar. Os links são colados em cada serviço.</p></div></div><div class="bd">
         ${(m.estrutura || []).length ? `<ul class="ac-arvore">${htmlArvore(m.estrutura, 'm:' + m.id, true)}</ul>` : '<p class="small muted">Vazio.</p>'}
@@ -358,7 +426,7 @@
     ui.abrirModal({
       titulo: novo ? 'Novo modelo' : 'Nome e tipo do modelo',
       corpo: `<label class="f req"><span>Nome do modelo</span><input class="inp" name="nome" value="${esc(m.nome || '')}" placeholder="Ex.: Laudo de SPDA" autofocus></label>
-        <label class="f" style="margin-top:10px"><span>Usar como padrão para</span><select class="inp" name="tipo"><option value="">Nenhum tipo (escolho na hora)</option>${R.TIPOS_SERVICO.map(([k, n]) => `<option value="${k}" ${m.tipoPadrao === k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>`,
+        <label class="f" style="margin-top:10px"><span>Usar como padrão para</span><select class="inp" name="tipo"><option value="">Nenhum tipo (escolho na hora)</option>${tipos().filter((t) => !t.oculto || t.k === m.tipoPadrao).map((t) => `<option value="${esc(t.k)}" ${m.tipoPadrao === t.k ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}</select></label>`,
       botoes: [{ rot: 'Cancelar' }, { rot: novo ? 'Criar modelo' : 'Salvar', classe: 'primary', acao: (x) => {
         const nome = $('[name=nome]', x.el).value.trim(); if (!nome) { $('[name=nome]', x.el).classList.add('erro'); return; }
         const tipo = $('[name=tipo]', x.el).value;
@@ -380,7 +448,7 @@
   };
   A['ac-sv-modelo'] = (b) => {
     const s = servico(b.dataset.id); if (!s) return;
-    modalModelo({ nome: s.titulo || R.nomeTipo(s.tipo), tipoPadrao: R.MODELOS[s.tipo] ? '' : s.tipo, estrutura: R.copiarEstrutura(s.estrutura, { semLinks: true }) }, () => { ui.toast('Modelo salvo. Ele aparece na hora de criar um serviço.'); Sis.desenhar(true); });
+    modalModelo({ nome: s.titulo || nomeTipo(s.tipo), tipoPadrao: R.MODELOS[s.tipo] ? '' : s.tipo, estrutura: R.copiarEstrutura(s.estrutura, { semLinks: true }) }, () => { ui.toast('Modelo salvo. Ele aparece na hora de criar um serviço.'); Sis.desenhar(true); });
   };
 
   /* ---------- cliente ---------- */
@@ -428,14 +496,16 @@
   /* ---------- serviço ---------- */
   function modalServico(cid, s) {
     const novo = !s;
-    s = s || { tipo: 'inspecao_predial', codigo: '', titulo: '', data: hojeISO(), situacao: 'andamento', renovaAnos: '', estrutura: [] };
+    // código já começa com o do cliente: SE + número da pasta (ex.: SE130)
+    const cli = cliente(cid) || {};
+    s = s || { tipo: 'inspecao_predial', codigo: `SE${cli.numero || ''}`, titulo: '', data: hojeISO(), situacao: 'andamento', renovaAnos: '', estrutura: [] };
     const ms = modelos();
     ui.abrirModal({
       titulo: novo ? 'Novo serviço' : 'Editar serviço',
       sub: 'A validade alimenta os vencimentos e o pedido de renovação que o cliente vê.',
       corpo: `<div class="grid2">
-        <label class="f"><span>Tipo</span><select class="inp" name="tipo">${R.TIPOS_SERVICO.map(([k, n]) => `<option value="${k}" ${s.tipo === k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
-        <label class="f"><span>Código</span><input class="inp" name="codigo" value="${esc(s.codigo || '')}" placeholder="Ex.: SE231.AVCB"></label>
+        <div class="f"><span class="ac-tp-rot"><label for="ac-sv-tipo">Tipo</label><button type="button" class="ac-lnk" data-q="tipos">Editar lista</button></span><select class="inp" name="tipo" id="ac-sv-tipo">${opcoesTipo(s.tipo)}</select></div>
+        <label class="f"><span>Código</span><input class="inp" name="codigo" value="${esc(s.codigo || '')}" placeholder="Ex.: SE231.AVCB" autocapitalize="characters" spellcheck="false"></label>
         <label class="f span2"><span>Título (como o cliente vê)</span><input class="inp" name="titulo" value="${esc(s.titulo || '')}" placeholder="Ex.: AVCB 2026"></label>
         <label class="f"><span>Data (entrega ou início)</span><input class="inp" type="date" name="data" value="${esc(s.data || '')}"></label>
         <label class="f"><span>Situação</span><select class="inp" name="situacao">${SITUACOES.map(([k, n]) => `<option value="${k}" ${s.situacao === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
@@ -447,13 +517,21 @@
         let mexeuTit = !novo, mexeuAnos = !novo, mexeuMod = false;
         if (mod) mod.addEventListener('change', () => { mexeuMod = true; });
         const sugerir = () => {
-          if (!mexeuTit) tit.value = `${R.nomeTipo(tipo.value)}${data.value ? ' ' + data.value.slice(0, 4) : ''}`;
-          if (!mexeuAnos) { const t = R.TIPOS_SERVICO.find((x) => x[0] === tipo.value); anos.value = t && t[2] ? t[2] : ''; }
+          if (!mexeuTit) tit.value = `${nomeTipo(tipo.value)}${data.value ? ' ' + data.value.slice(0, 4) : ''}`;
+          if (!mexeuAnos) { const t = tipoPor(tipo.value); anos.value = t && t.anos ? t.anos : ''; }
           if (mod && !mexeuMod) { const m = modeloDoTipo(tipo.value); mod.value = m ? m.id : ''; }
           const v = R.vencimento({ data: data.value, renovaAnos: anos.value });
           venc.textContent = v ? `Vence em ${dataBR(v)}. ${sit.value === 'entregue' ? 'Entra nas Renovações.' : 'Entra nas Renovações quando estiver Entregue.'}` : '';
         };
         sit.addEventListener('change', sugerir);
+        // editar a lista de tipos sem sair do serviço
+        $('[data-q=tipos]', el).addEventListener('click', (ev) => { ev.preventDefault(); modalTipos(() => { const v = tipo.value; tipo.innerHTML = opcoesTipo(v); if (tipo.value !== v) tipo.value = tipo.options[0] ? tipo.options[0].value : ''; sugerir(); }); });
+        // código: com o SE130 todo selecionado (entrou com Tab), digitar continua depois dele em vez de apagar
+        const cod = $('[name=codigo]', el), pre = cod.value;
+        cod.addEventListener('keydown', (ev) => {
+          if (!novo || !pre || cod.value !== pre || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey) return;
+          if (cod.selectionStart === 0 && cod.selectionEnd === pre.length) cod.setSelectionRange(pre.length, pre.length);
+        });
         tit.addEventListener('input', () => { mexeuTit = true; });
         anos.addEventListener('input', () => { mexeuAnos = true; sugerir(); });
         tipo.addEventListener('change', sugerir); data.addEventListener('change', sugerir); data.addEventListener('input', sugerir);
@@ -467,7 +545,7 @@
         { rot: 'Cancelar' },
         { rot: novo ? 'Criar serviço' : 'Salvar', classe: 'primary', acao: (m) => {
           const v = (n) => ($(`[name=${n}]`, m.el) ? $(`[name=${n}]`, m.el).value.trim() : '');
-          const d = Object.assign({}, s, { id: s.id || uid(), clienteId: cid, tipo: v('tipo'), codigo: v('codigo'), titulo: v('titulo') || R.nomeTipo(v('tipo')), data: v('data'), situacao: v('situacao'), renovaAnos: v('renovaAnos').replace(/[^\d]/g, '') });
+          const d = Object.assign({}, s, { id: s.id || uid(), clienteId: cid, tipo: v('tipo'), tipoNome: nomeTipo(v('tipo')), codigo: v('codigo'), titulo: v('titulo') || nomeTipo(v('tipo')), data: v('data'), situacao: v('situacao'), renovaAnos: v('renovaAnos').replace(/[^\d]/g, '') });
           if (novo) { const md = modelo(v('modelo')); d.estrutura = md ? R.copiarEstrutura(md.estrutura, { semLinks: true }) : []; d.criadoEm = new Date().toISOString(); }
           salvarServico(d);
           m.fechar();
@@ -485,7 +563,7 @@
   A['ac-contrato-link'] = (b) => {
     const s = servico(b.dataset.sv); if (!s) return;
     ui.abrirModal({
-      titulo: 'Link do contrato', sub: esc(s.titulo || R.nomeTipo(s.tipo)),
+      titulo: 'Link do contrato', sub: esc(s.titulo || nomeTipo(s.tipo)),
       corpo: `<label class="f"><span>Link do contrato no Drive (PDF assinado)</span><input class="inp" name="url" value="${esc(s.contratoUrl || '')}" placeholder="Cole aqui o link copiado no Drive" autocapitalize="off" spellcheck="false" autofocus></label>`,
       botoes: [...(s.contratoUrl ? [{ rot: 'Tirar o link', classe: 'danger', esq: true, acao: (m) => { s.contratoUrl = ''; salvarServico(s); m.fechar(); Sis.desenhar(true); } }] : []), { rot: 'Cancelar' }, { rot: 'Salvar', classe: 'primary', acao: (m) => {
         const url = $('[name=url]', m.el).value.trim();
