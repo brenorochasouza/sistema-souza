@@ -58,6 +58,8 @@ window.RDOB = (function () {
 
   const store = {
     get(t, id) { const r = mapas[t].get(id); return r && !r.excluido ? r : null; },
+    /** O registro como está no aparelho, inclusive excluído (null: ainda não chegou aqui). */
+    bruto(t, id) { return mapas[t].get(id) || null; },
     lista(t, tipo) { const out = []; for (const r of mapas[t].values()) if (!r.excluido && (!tipo || r.tipo === tipo)) out.push(r); return out; },
     dados(t, tipo) { return store.lista(t, tipo).map((r) => Object.assign({ id: r.id }, r.dados)); },
     gravar(t, linhas, { silencioso = false } = {}) {

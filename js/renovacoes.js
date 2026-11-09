@@ -4,6 +4,8 @@
    predial, fachada, AVCB...) e quando renovar. O lembrete vai
    para a Google Agenda 90 dias antes da renovação.
    Fica na tabela "comercial", tipo "laudo", grupo = cliente.
+   Os serviços entregues da Área do cliente com validade entram
+   aqui sozinhos (areaId = o serviço); os outros são avulsos.
    ========================================================= */
 (function () {
   const { $, $$, esc, norm, hojeISO, deISO, isoData, somaDias, dataBR } = Sis.util;
@@ -97,7 +99,7 @@
     const s = situacao(l), at = ativo(l);
     const agendado = at && l.agendaEm && l.agendaPara === dataLembrete(l);
     return `<div class="rn-it ${s.k}">
-      <div class="rn-cli"><b>${esc(nomeCli(l))}</b><span>${esc(l.tipo)}${l.obs ? ` · ${esc(l.obs)}` : ''}</span></div>
+      <div class="rn-cli"><b>${esc(nomeCli(l))}</b><span>${esc(l.tipo)}${l.obs ? ` · ${esc(l.obs)}` : ''}</span>${l.areaId ? `<a class="rn-orig" href="#/area/${esc(l.areaCliente || '')}" title="Vem do serviço na Área do cliente">${icone('pasta')}Área do cliente</a>` : ''}</div>
       <div class="rn-dt"><span><small>Entregue</small>${dataBR(l.entrega) || '-'}</span><span><small>Renovação${anosDe(l) ? ` (${anosDe(l)} ${anosDe(l) === 1 ? 'ano' : 'anos'})` : ''}</small><b>${dataBR(l.renovacao) || '-'}</b></span></div>
       <div class="rn-st"><span class="chip ${s.cls}">${esc(s.txt)}</span>${at && l.contatoEm ? `<small>${icone('check')}Contatado em ${dataBR(l.contatoEm)}</small>` : ''}</div>
       <div class="rn-ac">${at ? `
@@ -108,6 +110,7 @@
     </div>`;
   }
   function render(el) {
+    if (Sis.areaCliente) Sis.areaCliente.sincronizarRenovacoes(); // serviços entregues da Área do cliente
     const todos = laudos();
     const hoje = hojeISO(), ano = hoje.slice(0, 4);
     const c = contagem();
@@ -124,11 +127,11 @@
       .sort((a, b) => (est.filtro === 'historico' ? String(b.renovacao).localeCompare(String(a.renovacao)) : String(a.renovacao).localeCompare(String(b.renovacao))));
     const segs = [['atencao', 'Contatar', c.contatar + c.vencido], ['emdia', 'Em dia', c.emdia], ['todos', 'Todos ativos', c.contatar + c.vencido + c.emdia], ['historico', 'Histórico', todos.filter((l) => !ativo(l)).length]];
     const vazio = {
-      atencao: todos.length ? `Nenhum laudo vence nos próximos ${ANTECEDENCIA} dias.` : 'Registre os laudos recorrentes que você entrega para acompanhar as renovações.',
+      atencao: todos.length ? `Nenhum laudo vence nos próximos ${ANTECEDENCIA} dias.` : 'Os serviços entregues na Área do cliente com validade aparecem aqui sozinhos. Laudos de fora dela entram como renovação avulsa.',
       emdia: 'Nenhum laudo em dia.', todos: 'Nenhum laudo ativo.', historico: 'Laudos renovados ou não renovados aparecem aqui.',
     };
     el.innerHTML = `<div class="pagehead"><div><h1>Renovações</h1><p>Laudos recorrentes entregues e quando renovar</p></div>
-        <div class="actions"><button class="btn primary" data-a="rn-novo">${icone('mais')}Laudo entregue</button></div></div>
+        <div class="actions"><button class="btn primary" data-a="rn-novo">${icone('mais')}Renovação avulsa</button></div></div>
       <div class="o-painel rn-painel">
         <div class="${c.contatar ? 'al' : ''}"><span>A contatar (próx. ${ANTECEDENCIA} dias)</span><b>${c.contatar}</b></div>
         <div class="${c.vencido ? 'vc' : ''}"><span>Vencidos</span><b>${c.vencido}</b></div>
@@ -139,7 +142,7 @@
         <div class="o-busca">${icone('busca')}<input class="inp" id="rn-busca" placeholder="Buscar cliente ou laudo" value="${esc(est.busca)}" autocomplete="off"></div></div>
       ${vis.length ? `<div class="rn-lista">${vis.map(itemHTML).join('')}</div>`
         : `<div class="card"><div class="empty"><b>${t ? 'Nada encontrado' : 'Tudo em ordem'}</b>${t ? 'Tente outro nome.' : vazio[est.filtro]}
-          ${!todos.length ? `<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-a="rn-novo">${icone('mais')}Laudo entregue</button></div>` : ''}</div></div>`}`;
+          ${!todos.length ? `<div class="actions" style="justify-content:center;margin-top:14px"><button class="btn primary" data-a="rn-novo">${icone('mais')}Renovação avulsa</button></div>` : ''}</div></div>`}`;
     const inp = $('#rn-busca', el);
     inp.addEventListener('input', () => {
       est.busca = inp.value;
@@ -202,7 +205,7 @@
   A['rn-novo'] = () => {
     let f;
     ui.abrirModal({
-      titulo: 'Laudo recorrente entregue', sub: 'O sistema calcula a renovação e manda o lembrete para a Google Agenda 90 dias antes.',
+      titulo: 'Renovação avulsa', sub: 'Para laudos que não estão na Área do cliente. O sistema calcula a renovação e manda o lembrete para a Google Agenda 90 dias antes.',
       corpo: camposLaudo({ entrega: hojeISO() }),
       aoAbrir: (el) => { f = ligarCampos(el, {}, false); },
       botoes: [{ rot: 'Cancelar' }, {
@@ -218,8 +221,31 @@
       }],
     });
   };
+  /** Laudo que vem da Área do cliente: cliente, laudo e datas seguem o serviço; aqui muda só a observação. */
+  function editarLigado(l) {
+    const at = ativo(l);
+    const botoes = [at
+      ? { rot: 'Não vai renovar', esq: true, acao: async (m) => {
+        if (!(await ui.confirmar({ titulo: 'Marcar como não renovado?', msg: 'O laudo sai da lista de contatos e vai para o Histórico.', ok: 'Marcar' }))) return;
+        Object.assign(l, { situacao: 'encerrado', encerradoEm: hojeISO() }); salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Movido para o Histórico.');
+      } }
+      : { rot: 'Reativar', esq: true, acao: (m) => { Object.assign(l, { situacao: 'ativo' }); delete l.encerradoEm; salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Laudo reativado.'); } },
+    { rot: 'Abrir o serviço', acao: (m) => { m.fechar(); location.hash = '#/area/' + (l.areaCliente || ''); } },
+    { rot: 'Salvar', classe: 'primary', acao: (m) => {
+      const o = $('[name=obs]', m.el).value.trim();
+      if (o) l.obs = o; else delete l.obs;
+      salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Laudo atualizado.');
+    } }];
+    ui.abrirModal({
+      titulo: 'Editar laudo', sub: esc(`${nomeCli(l)} · ${l.tipo}`) + (at ? '' : ' · ' + esc(situacao(l).txt)),
+      corpo: `<div class="rn-lig">${icone('pasta')}<span>Este laudo vem do serviço entregue na <b>Área do cliente</b>. Entregue em <b>${dataBR(l.entrega)}</b>, renova a cada ${anosDe(l)} ${anosDe(l) === 1 ? 'ano' : 'anos'}: <b>${dataBR(l.renovacao)}</b>. Para mudar cliente, laudo ou datas, edite o serviço lá.</span></div>
+        <label class="f" style="margin-top:12px"><span>Observação</span><input class="inp" name="obs" value="${esc(l.obs || '')}" placeholder="Opcional. Ex.: torres A e B"></label>`,
+      botoes,
+    });
+  }
   A['rn-editar'] = (b) => {
     const l = laudo(b.dataset.id); if (!l) return;
+    if (l.areaId) { editarLigado(l); return; }
     const at = ativo(l);
     const ant = [];
     for (let x = l.anteriorId && laudo(l.anteriorId); x && ant.length < 20; x = x.anteriorId && laudo(x.anteriorId)) ant.push(x);
@@ -298,7 +324,7 @@
   }
 
   /* ---------------- registro ---------------- */
-  Sis.renovacoes = { cardInicio, laudos, contagem };
+  Sis.renovacoes = { cardInicio, laudos, laudo, contagem, salvar, ativo, somaAnos, excluir: (id) => store.excluir(T, id) };
   Sis.usosCli.push((id) => ({ n: laudos().filter((l) => l.clienteId === id).length, rot: 'laudo recorrente', plural: 'laudos recorrentes' }));
   Sis.modulo({
     id: 'renovacoes', nome: 'Renovações', desc: 'Laudos recorrentes', icone: 'repetir', sistema: true, render,
