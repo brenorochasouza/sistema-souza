@@ -3,6 +3,9 @@
    Orçamentos: planilhas orçamentárias por etapas, itens e
    subitens, com material, mão de obra e BDI. Impressão em A4
    (ou PDF), exportação e importação de planilhas do Excel.
+   Orçamento de serviço técnico (tipoOrc "servico"): custos por
+   m², por dia, por unidade ou valor fechado, imposto sobre o
+   subtotal e preço final (cálculo interno).
    Tabela "orcamentos": um registro por orçamento
    (tipo "orcamento", grupo = cliente) e um de configuração.
    ========================================================= */
@@ -196,6 +199,7 @@
     o.impostoBase = o.impostoBase === 'custo' ? 'custo' : 'custo_bdi';
     o.impostoRotulo = o.impostoRotulo || CONFIG_PADRAO.impostoRotulo;
     o.impressao = opImpressao(o.impressao);
+    if (o.tipoOrc === 'servico') normServ(o); else delete o.tipoOrc;
     recalcularQtds(o);
     return o;
   }
@@ -260,7 +264,53 @@
     const impostoValor = (t.tot + (tx.sobreBdi ? bdiValor : 0)) * tx.i;
     return { m, etapas, mat: t.mat, mdo: t.mdo, direto: t.tot, baseBdi: t.bb, isento: t.tot - t.bb, nIsentos, bdiValor, impostoValor, final: t.tot + bdiValor + impostoValor, nItens, nSub, nNeg };
   }
-  const totalFinal = (o) => calcular(o).final;
+  const totalFinal = (o) => (ehServ(o) ? calcServ(o).final : calcular(o).final);
+
+  /* ---------------- serviço técnico: modelos e cálculo ----------------
+     Linha: total = quantidade x valor. Por m² usa a área, por dia os
+     dias de campo (a quantidade da linha, se digitada, vale no lugar).
+     Preço final = subtotal + imposto (% sobre o subtotal). */
+  const FORMAS = [['m2', 'Por m²', 'm²'], ['dia', 'Por dia', 'dias'], ['un', 'Por unidade', 'un'], ['fixo', 'Valor fechado', '']];
+  const FORMA = Object.fromEntries(FORMAS.map(([k, n, u]) => [k, { n, u }]));
+  const MODELOS_SERV = {
+    fachada: { nome: 'Inspeção de fachadas', imposto: 15, linhas: [
+      { desc: 'Alpinistas', forma: 'm2', valor: 1.2 },
+      { desc: 'Assistente de engenharia', forma: 'dia', valor: null },
+      { desc: 'Técnico de segurança', forma: 'dia', valor: null },
+      { desc: 'Materiais', forma: 'fixo', valor: null },
+      { desc: 'Elaboração do laudo', forma: 'fixo', valor: null },
+    ] },
+  };
+  const ehServ = (o) => !!o && o.tipoOrc === 'servico';
+  /** Modelos de serviço: os prontos (com a sua versão, se você salvou por cima) e os seus. */
+  function modelosServ() {
+    const meus = config().modelosServ || {};
+    const r = {};
+    Object.keys(MODELOS_SERV).forEach((k) => { r[k] = Object.assign({}, meus[k] || MODELOS_SERV[k], { pronto: true, mudado: !!meus[k] }); });
+    Object.keys(meus).forEach((k) => { if (!r[k]) r[k] = Object.assign({}, meus[k]); });
+    return r;
+  }
+  function novoServ(chave) {
+    const m = modelosServ()[chave] || MODELOS_SERV.fachada;
+    return { modelo: chave, nomeModelo: m.nome, area: null, dias: null, imposto: vazio(m.imposto) ? 15 : Number(m.imposto),
+      linhas: (m.linhas || []).map((l) => ({ id: rid(), desc: l.desc || '', forma: FORMA[l.forma] ? l.forma : 'fixo', valor: vazio(l.valor) ? null : Number(l.valor), qtd: null })) };
+  }
+  function normServ(o) {
+    const s = o.servico = Object.assign({ modelo: '', nomeModelo: 'Serviço técnico', area: null, dias: null, imposto: 15, linhas: [] }, o.servico || {});
+    s.linhas = Array.isArray(s.linhas) ? s.linhas : [];
+    s.linhas.forEach((l) => { l.id = l.id || rid(); l.forma = FORMA[l.forma] ? l.forma : 'fixo'; });
+  }
+  /** Área e quantidades sem casas decimais sobrando: 2.500, 12,5. */
+  const fa = (n) => (vazio(n) ? '' : Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 2 }));
+  const qtdAuto = (s, l) => (l.forma === 'm2' ? nn(s.area) : l.forma === 'dia' ? nn(s.dias) : 1);
+  const qtdLinha = (s, l) => (l.forma === 'fixo' ? 1 : vazio(l.qtd) ? qtdAuto(s, l) : nn(l.qtd));
+  function calcServ(o) {
+    const s = o.servico, m = new Map();
+    let subtotal = 0;
+    s.linhas.forEach((l) => { const q = qtdLinha(s, l), tot = q * nn(l.valor); m.set(l.id, { q, tot }); subtotal += tot; });
+    const impostoValor = subtotal * nn(s.imposto) / 100, final = subtotal + impostoValor;
+    return { m, subtotal, impostoValor, final, porM2: nn(s.area) > 0 ? final / nn(s.area) : null };
+  }
 
   /* ---------------- estado da tela ---------------- */
   const est = {
@@ -456,6 +506,7 @@
      Lista de orçamentos
      ========================================================= */
   function cardOrc(o) {
+    if (ehServ(o)) return cardServ(o);
     const c = calcular(o);
     const cli = clientes.nome(o.clienteId);
     const st = ST[o.status];
@@ -465,6 +516,16 @@
       <span class="o-card-cli">${esc(cli || 'Sem cliente')}</span>
       <div class="o-card-pe"><div><small>Valor final</small><b class="n">${brl(c.final)}</b></div>
         <div class="dir"><small>${dataBR(o.data)}</small><small>${o.etapas.length} ${o.etapas.length === 1 ? 'etapa' : 'etapas'} · ${c.nItens + c.nSub} linhas</small></div></div>
+    </a>`;
+  }
+  function cardServ(o) {
+    const c = calcServ(o), s = o.servico, st = ST[o.status];
+    return `<a class="o-card" href="#/orcamentos/${esc(o.id)}">
+      <div class="o-card-top"><span class="o-cod">Nº ${esc(o.codigo || 's/n')}</span><span class="chip ${st.c}">${st.n}</span></div>
+      <b class="o-card-tit">${esc(o.titulo || 'Orçamento sem título')}</b>
+      <span class="o-card-cli">${esc(clientes.nome(o.clienteId) || 'Sem cliente')}</span>
+      <div class="o-card-pe"><div><small>Preço final</small><b class="n">${brl(c.final)}</b></div>
+        <div class="dir"><small>${dataBR(o.data)}</small><small>${esc(s.nomeModelo)}${nn(s.area) ? ` · ${fa(s.area)} m²` : ''}</small></div></div>
     </a>`;
   }
   function renderLista(el) {
@@ -479,7 +540,7 @@
     const vis = todos.filter((o) => (est.filtro === 'todos' || o.status === est.filtro)
       && (!t || norm([o.titulo, o.codigo, clientes.nome(o.clienteId)].join(' ')).includes(t)));
     const filtros = [['todos', 'Todos', todos.length]].concat(STATUS.map(([k, n]) => [k, n, contar(k).length]));
-    el.innerHTML = `<div class="pagehead"><div><h1>Orçamentos</h1><p>Planilhas orçamentárias por etapas, itens e subitens</p></div>
+    el.innerHTML = `<div class="pagehead"><div><h1>Orçamentos</h1><p>Obras por etapas, itens e subitens, e serviços técnicos</p></div>
         <div class="actions"><button class="btn" data-a="orc-importar">${icone('enviar')}Importar planilha</button><button class="btn primary" data-a="orc-novo">${icone('mais')}Novo orçamento</button></div></div>
       ${avisoTabela()}
       <div class="o-painel">
@@ -523,8 +584,10 @@
         <label class="f" data-imp><span>Imposto sobre</span><select class="inp" name="impostoBase">${BASES_IMP.map(([k, n]) => `<option value="${k}" ${base === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>`;
   function ligarImposto(raiz) {
     const sel = $('[name=modalidade]', raiz);
-    const mostrar = () => $$('[data-imp]', raiz).forEach((x) => { x.hidden = sel.value !== 'global'; });
+    const serv = () => { const t = $('[name=tipoOrc]:checked', raiz); return !!t && t.value === 'servico'; };
+    const mostrar = () => $$('[data-imp]', raiz).forEach((x) => { x.hidden = serv() || sel.value !== 'global'; });
     sel.addEventListener('change', mostrar); mostrar();
+    return mostrar;
   }
   /** Lê o imposto do modal. Retorna null se o valor digitado for inválido. */
   function lerImposto(raiz) {
@@ -537,19 +600,25 @@
   }
   A['orc-novo'] = () => {
     const cfg = config();
-    const outros = listaOrc().sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+    const outros = listaOrc().filter((o) => !ehServ(o)).sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+    const ms = modelosServ();
     let sel;
     ui.abrirModal({
-      titulo: 'Novo orçamento', sub: 'Você completa as etapas, os itens e os subitens na planilha.',
-      corpo: `<div class="grid2">
+      titulo: 'Novo orçamento', sub: 'Obra: você completa as etapas, os itens e os subitens na planilha. Serviço técnico: os custos já vêm do modelo.',
+      corpo: `<div class="o-inicio o-tipo">
+          <label class="o-op"><input type="radio" name="tipoOrc" value="obra" checked><span><b>Obra</b><small>Planilha por etapas, itens e subitens</small></span></label>
+          <label class="o-op"><input type="radio" name="tipoOrc" value="servico"><span><b>Serviço técnico</b><small>Inspeção de fachadas e outros: custos e preço final</small></span></label>
+        </div>
+        <div class="grid2">
         ${campoNumero()}
-        <label class="f"><span>Modalidade</span><select class="inp" name="modalidade">${MODALIDADES.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
+        <label class="f" data-serv hidden><span>Serviço</span><select class="inp" name="modeloServ">${Object.entries(ms).map(([k, m]) => `<option value="${esc(k)}">${esc(m.nome)}</option>`).join('')}</select></label>
+        <label class="f" data-obra><span>Modalidade</span><select class="inp" name="modalidade">${MODALIDADES.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
         <label class="f req span2"><span>Obra ou serviço</span><input class="inp" name="titulo" placeholder="Ex.: Impermeabilização da cobertura"></label>
         <div class="span2" id="orc-n-cli"></div>
-        <label class="f"><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(cfg.bdi))}"></label>
+        <label class="f" data-obra><span>BDI (%)</span><input class="inp money" name="bdi" inputmode="decimal" value="${esc(cru(cfg.bdi))}"></label>
         ${camposImposto(cfg.imposto, cfg.impostoBase)}
       </div>
-      <div class="f"><span class="secao-form">Começar com</span>
+      <div class="f" data-obra><span class="secao-form">Começar com</span>
         <div class="o-inicio">
           <label class="o-op"><input type="radio" name="base" value="padrao" checked><span><b>Etapas padrão</b><small>${ETAPAS_PADRAO.length} etapas da Souza, sem itens</small></span></label>
           <label class="o-op"><input type="radio" name="base" value="branco"><span><b>Em branco</b><small>Você cria as etapas</small></span></label>
@@ -559,7 +628,15 @@
       </div>`,
       aoAbrir: (m) => {
         sel = Sis.seletorCliente($('#orc-n-cli', m), { rotulo: 'Cliente' });
-        ligarImposto(m);
+        const imp = ligarImposto(m);
+        const tit = $('[name=titulo]', m);
+        $$('[name=tipoOrc]', m).forEach((r) => r.addEventListener('change', () => {
+          const serv = $('[name=tipoOrc]:checked', m).value === 'servico';
+          $$('[data-obra]', m).forEach((x) => { x.hidden = serv; });
+          $$('[data-serv]', m).forEach((x) => { x.hidden = !serv; });
+          tit.placeholder = serv ? 'Ex.: Inspeção de fachadas do Condomínio Bosque' : 'Ex.: Impermeabilização da cobertura';
+          imp();
+        }));
         $$('[name=base]', m).forEach((r) => r.addEventListener('change', () => { $('[name=origem]', m).hidden = $('[name=base]:checked', m).value !== 'copia'; }));
       },
       botoes: [{ rot: 'Cancelar' }, {
@@ -568,6 +645,12 @@
           const titulo = $('[name=titulo]', m.el).value.trim();
           if (!titulo) { $('[name=titulo]', m.el).classList.add('erro'); $('[name=titulo]', m.el).focus(); return; }
           const erro = sel.validar(); if (erro) { ui.toast(erro); return; }
+          if ($('[name=tipoOrc]:checked', m.el).value === 'servico') {
+            const id = criarOrc({ codigo, titulo, clienteId: sel.valor().clienteId, tipoOrc: 'servico', servico: novoServ($('[name=modeloServ]', m.el).value), bdi: 0, imposto: 0, etapas: [], observacoes: '' });
+            m.fechar();
+            location.hash = `#/orcamentos/${id}`;
+            return;
+          }
           const bdi = lerNumero($('[name=bdi]', m.el).value);
           if (!bdi || bdi.v === null) { $('[name=bdi]', m.el).classList.add('erro'); return; }
           const imp = lerImposto(m.el); if (!imp) return;
@@ -600,6 +683,12 @@
 
   function htmlTopo(o) {
     const st = ST[o.status], cli = clientes.nome(o.clienteId);
+    if (ehServ(o)) {
+      return `<div class="ob-topo o-topo"><a class="btn icon" href="#/orcamentos" aria-label="Voltar para orçamentos">${icone('esq')}</a>
+      <div class="tit"><b>${esc(o.titulo || 'Orçamento sem título')}</b><span>Nº ${esc(o.codigo || 's/n')} · ${esc(cli || 'Sem cliente')} · ${esc(o.servico.nomeModelo)}</span></div>
+      <div class="actions"><span class="o-salvo ${est.salvo}" id="orc-salvo">${est.salvo === 'ok' ? 'Salvo' : 'Salvando…'}</span><button class="chip ${st.c} o-st" data-a="orc-status" aria-label="Situação do orçamento">${st.n}${icone('baixo')}</button>
+        <button class="btn icon" data-a="orc-mais" aria-label="Mais opções">${icone('pontos')}</button></div></div>`;
+    }
     return `<div class="ob-topo o-topo"><a class="btn icon" href="#/orcamentos" aria-label="Voltar para orçamentos">${icone('esq')}</a>
       <div class="tit"><b>${esc(o.titulo || 'Orçamento sem título')}</b><span>Nº ${esc(o.codigo || 's/n')} · ${esc(cli || 'Sem cliente')} · ${MOD[o.modalidade]}</span></div>
       <div class="actions"><button class="chip ${st.c} o-st" data-a="orc-status" aria-label="Situação do orçamento">${st.n}${icone('baixo')}</button>
@@ -629,6 +718,7 @@
   function renderOrc(el, id, aba) {
     const o = abrirOrc(id);
     if (!o) { el.innerHTML = '<div class="card"><div class="empty"><b>Orçamento não encontrado</b><a href="#/orcamentos">Ver todos os orçamentos</a></div></div>'; return; }
+    if (ehServ(o)) { renderServ(el, o); return; }
     est.cel = celular();
     const c = calcular(o);
     trocarHTML(el, `<div class="o-ed" data-aba="${aba}">
@@ -1641,7 +1731,7 @@
     const d = copia(o); delete d.id;
     const id = criarOrc(Object.assign(d, { codigo: o.codigo || '', titulo: (o.titulo || 'Orçamento') + ' (cópia)', status: 'elaboracao', statusEm: null, data: hojeISO(), etapas: (() => { const mapa = new Map(); const es = copia(o.etapas).map((e) => novosIds(e, mapa)); remapearRefs(es, mapa); return es; })(), criadoEm: new Date().toISOString() }));
     location.hash = `#/orcamentos/${id}`;
-    ui.toast('Orçamento duplicado com o mesmo número. Se precisar, troque em Dados e condições.');
+    ui.toast(ehServ(o) ? 'Orçamento duplicado com o mesmo número. Se precisar, troque o número.' : 'Orçamento duplicado com o mesmo número. Se precisar, troque em Dados e condições.');
   }
   async function excluirOrc() {
     const o = est.orc;
@@ -1653,7 +1743,12 @@
     location.hash = '#/orcamentos';
     ui.toast('Orçamento excluído.');
   }
-  A['orc-mais'] = (el) => popover(el, [
+  A['orc-mais'] = (el) => popover(el, ehServ(est.orc) ? [
+    { rot: 'Salvar como modelo', ic: 'lista', acao: salvarModeloServ },
+    { rot: 'Duplicar orçamento', ic: 'copiar', acao: duplicarOrc },
+    '-',
+    { rot: 'Excluir orçamento', ic: 'lixo', perigo: true, acao: excluirOrc },
+  ] : [
     { rot: 'Imprimir ou salvar PDF', ic: 'imprimir', acao: () => A['orc-imprimir']() },
     { rot: 'Exportar para Excel', ic: 'planilha', acao: () => A['orc-excel']() },
     { rot: 'Duplicar orçamento', ic: 'copiar', acao: duplicarOrc },
@@ -2337,11 +2432,13 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
         ${f('impostoRotulo', 'Nome do imposto', c.impostoRotulo, 'span2')}
         <label class="f span2"><span>Observações padrão de um orçamento novo</span><textarea class="inp" data-oc="observacoes" rows="4" placeholder="Ex.: Prazo de execução, forma de pagamento">${esc(c.observacoes || '')}</textarea></label>
       </div>
-      <div class="actions" style="margin-top:12px"><button class="btn primary" data-a="orc-cfg-salvar">Salvar</button></div></div></div>`;
+      <div class="actions" style="margin-top:12px"><button class="btn primary" data-a="orc-cfg-salvar">Salvar</button></div>
+      ${htmlModelosServ()}</div></div>`;
   }
   A['orc-cfg-salvar'] = () => {
     const c = config();
     const novo = { empresa: Object.assign({}, c.empresa), bdi: c.bdi, validade: c.validade, bdiRotulo: c.bdiRotulo, imposto: c.imposto, impostoBase: c.impostoBase, impostoRotulo: c.impostoRotulo, observacoes: c.observacoes };
+    if (c.modelosServ) novo.modelosServ = c.modelosServ;
     for (const el of $$('[data-oc]')) {
       const k = el.dataset.oc, v = el.value.trim();
       if (k.startsWith('empresa.')) novo.empresa[k.slice(8)] = v;
@@ -2356,10 +2453,170 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
   };
 
   /* =========================================================
+     Orçamento de serviço técnico aberto
+     ========================================================= */
+  const kpisServ = (o, c) => `<div class="o-k"><span>Subtotal dos serviços</span><b class="n">${brl(c.subtotal)}</b><small>${o.servico.linhas.length} ${o.servico.linhas.length === 1 ? 'linha' : 'linhas'} de custo</small></div>
+    <div class="o-k"><span>Imposto</span><b class="n">${brl(c.impostoValor)}</b><small>${pctTxt(o.servico.imposto)} sobre o subtotal</small></div>
+    <div class="o-k"><span>Preço por m²</span><b class="n">${c.porM2 === null ? '-' : brl(c.porM2)}</b><small>${nn(o.servico.area) ? `${fa(o.servico.area)} m² de fachada` : 'Informe a área'}</small></div>
+    <div class="o-k hero"><span>Preço final</span><b class="n">${brl(c.final)}</b><small>Subtotal + imposto</small></div>`;
+  function linhasServ(o, c) {
+    const s = o.servico;
+    const cab = '<div class="sv-ln sv-cab"><span>Descrição</span><span>Como calcula</span><span class="n">Valor (R$)</span><span class="n">Quantidade</span><span class="n">Total</span><span></span></div>';
+    const ls = s.linhas.map((l) => `<div class="sv-ln" data-sl="${esc(l.id)}">
+        <input class="inp sv-d" data-slf="desc" value="${esc(l.desc)}" placeholder="Ex.: Locação de equipamento" aria-label="Descrição">
+        <select class="inp" data-slf="forma" aria-label="Como calcula">${FORMAS.map(([k, n]) => `<option value="${k}" ${l.forma === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <input class="inp money n" data-slf="valor" inputmode="decimal" value="${esc(cru(l.valor))}" placeholder="0,00" aria-label="Valor">
+        ${l.forma === 'fixo' ? '<span class="sv-q"><span class="muted">1</span></span>' : `<span class="sv-q"><input class="inp money n" data-slf="qtd" inputmode="decimal" value="${esc(cru(l.qtd))}" placeholder="${esc(fa(qtdAuto(s, l)) || '0')}" aria-label="Quantidade" title="${l.forma === 'un' ? 'Quantidade' : `Em branco: ${l.forma === 'm2' ? 'a área de fachada' : 'os dias de campo'}`}"><small>${FORMA[l.forma].u}</small></span>`}
+        <b class="n sv-tot" data-tot>${brl(c.m.get(l.id).tot)}</b>
+        <button class="btn icon sm" data-a="sv-x" data-l="${esc(l.id)}" aria-label="Tirar a linha" title="Tirar a linha">${icone('fechar')}</button></div>`).join('');
+    const pe = `<div class="sv-pe"><span>Subtotal dos serviços</span><b class="n" data-sub>${brl(c.subtotal)}</b></div>
+      <div class="sv-pe"><span>Imposto de <input class="inp money n sv-imp" data-sf="imposto" inputmode="decimal" value="${esc(cru(s.imposto))}" aria-label="Imposto em %">%<span class="sv-so-pc"> sobre o subtotal</span></span><b class="n" data-imp>${brl(c.impostoValor)}</b></div>
+      <div class="sv-pe fim"><span>Preço final</span><b class="n" data-fin>${brl(c.final)}</b></div>`;
+    return `${cab}${ls || '<p class="small muted sv-vazio">Nenhuma linha de custo.</p>'}${pe}`;
+  }
+  function renderServ(el, o) {
+    const s = o.servico, c = calcServ(o);
+    trocarHTML(el, `<div class="o-sv">
+      ${htmlTopo(o)}
+      ${avisoTabela()}
+      <div class="o-kpis sv-kpis" id="sv-kpis">${kpisServ(o, c)}</div>
+      <section class="card"><div class="hd"><div><h3>Dados do serviço</h3><p>${esc(s.nomeModelo)}</p></div></div><div class="bd"><div class="sv-dados">
+        <label class="f"><span>Área de fachada (m²)</span><input class="inp money n" data-sf="area" inputmode="decimal" value="${esc(cru(s.area))}" placeholder="0"></label>
+        <label class="f"><span>Dias de campo</span><input class="inp money n" data-sf="dias" inputmode="decimal" value="${esc(cru(s.dias))}" placeholder="0"></label></div></div></section>
+      <section class="card"><div class="hd"><div><h3>Custos</h3><p>Por m² usa a área de fachada e por dia usa os dias de campo. Se uma linha tiver outra quantidade, digite na coluna Quantidade.</p></div></div>
+        <div class="bd"><div class="sv-tab" id="sv-linhas">${linhasServ(o, c)}</div>
+        <div class="actions"><button class="btn sm" data-a="sv-add">${icone('mais')}Linha de custo</button></div></div></section>
+      <section class="card"><div class="hd"><div><h3>Orçamento</h3></div></div><div class="bd"><div class="grid2">
+        <label class="f req"><span>Número do orçamento</span><input class="inp" data-sf="codigo" value="${esc(o.codigo || '')}" autocapitalize="characters" spellcheck="false"></label>
+        <label class="f"><span>Data</span><input class="inp" type="date" data-sf="data" value="${esc(o.data || '')}"></label>
+        <label class="f req span2"><span>Obra ou serviço</span><input class="inp" data-sf="titulo" value="${esc(o.titulo || '')}"></label>
+        <div class="span2" id="sv-cli"></div>
+        <label class="f span2"><span>Observações internas</span><textarea class="inp" data-sf="observacoes" rows="3" placeholder="Ex.: 4 torres, acesso pela cobertura">${esc(o.observacoes || '')}</textarea></label></div></div></section>
+    </div>`);
+    Sis.seletorCliente($('#sv-cli', el), { clienteId: o.clienteId, rotulo: 'Cliente', aoMudar: (id) => { est.orc.clienteId = id; salvarDepois(); pintarTopo(); } });
+    ligarServ($('.o-sv', el));
+  }
+  /** Atualiza os totais sem redesenhar os campos (o cursor fica onde está). */
+  function atualizarServ() {
+    const raiz = $('.o-sv'); if (!raiz || !est.orc) return;
+    const o = est.orc, s = o.servico, c = calcServ(o);
+    s.linhas.forEach((l) => {
+      const ln = raiz.querySelector(`[data-sl="${l.id}"]`); if (!ln) return;
+      $('[data-tot]', ln).textContent = brl(c.m.get(l.id).tot);
+      const q = $('[data-slf=qtd]', ln); if (q) q.placeholder = fa(qtdAuto(s, l)) || '0';
+    });
+    $('[data-sub]', raiz).textContent = brl(c.subtotal);
+    $('[data-imp]', raiz).textContent = brl(c.impostoValor);
+    $('[data-fin]', raiz).textContent = brl(c.final);
+    $('#sv-kpis', raiz).innerHTML = kpisServ(o, c);
+  }
+  function pintarLinhasServ(foco) {
+    const t = $('#sv-linhas'); if (!t || !est.orc) return;
+    trocarHTML(t, linhasServ(est.orc, calcServ(est.orc)));
+    atualizarServ();
+    if (foco) { const f = t.querySelector(foco); if (f) f.focus(); }
+  }
+  const NUM_SERV = new Set(['area', 'dias', 'imposto', 'valor', 'qtd']);
+  function ligarServ(raiz) {
+    if (!raiz) return;
+    const alvo = (t) => {
+      const ln = t.closest('[data-sl]');
+      if (t.dataset.slf && ln) return { obj: est.orc.servico.linhas.find((l) => l.id === ln.dataset.sl), k: t.dataset.slf };
+      if (t.dataset.sf) return { obj: ['area', 'dias', 'imposto'].includes(t.dataset.sf) ? est.orc.servico : est.orc, k: t.dataset.sf };
+      return null;
+    };
+    raiz.addEventListener('input', (ev) => {
+      const t = ev.target, a = alvo(t); if (!a || !a.obj || est.pintando) return;
+      if (NUM_SERV.has(a.k)) {
+        const r = lerNumero(t.value);
+        if (!r || (r.v !== null && r.v < 0)) { t.classList.add('erro'); return; }
+        t.classList.remove('erro');
+        a.obj[a.k] = r.v;
+        salvarDepois(); atualizarServ();
+      } else if (a.k === 'desc' || a.k === 'observacoes') { a.obj[a.k] = t.value; salvarDepois(); }
+    });
+    raiz.addEventListener('change', (ev) => {
+      const t = ev.target, a = alvo(t); if (!a || !a.obj) return;
+      if (a.k === 'forma') { a.obj.forma = t.value; a.obj.qtd = null; salvarDepois(); pintarLinhasServ(`[data-sl="${a.obj.id}"] [data-slf=valor]`); return; }
+      if (NUM_SERV.has(a.k)) { if (!t.classList.contains('erro')) t.value = cru(a.obj[a.k]); return; }
+      if (a.k === 'desc') { a.obj.desc = t.value.trim(); t.value = a.obj.desc; salvarDepois(); return; }
+      if (a.k === 'titulo') { const v = t.value.trim(); if (!v) { t.classList.add('erro'); return; } t.classList.remove('erro'); est.orc.titulo = v; }
+      else if (a.k === 'codigo') {
+        const v = t.value.trim();
+        const outro = v && listaOrc().find((x) => x.id !== est.orc.id && norm(x.codigo || '') === norm(v));
+        if (!v || outro) { t.classList.add('erro'); ui.toast(outro ? `O número ${v} já está no orçamento "${outro.titulo || 'sem título'}".` : 'Informe o número do orçamento.'); return; }
+        t.classList.remove('erro'); est.orc.codigo = v;
+      } else if (a.k === 'data') est.orc.data = t.value;
+      else return;
+      salvarDepois(); pintarTopo();
+    });
+  }
+  A['sv-add'] = () => {
+    if (!ehServ(est.orc)) return;
+    const l = { id: rid(), desc: '', forma: 'fixo', valor: null, qtd: null };
+    est.orc.servico.linhas.push(l);
+    salvarDepois(); pintarLinhasServ(`[data-sl="${l.id}"] [data-slf=desc]`);
+  };
+  A['sv-x'] = (b) => {
+    if (!ehServ(est.orc)) return;
+    const ls = est.orc.servico.linhas, i = ls.findIndex((l) => l.id === b.dataset.l); if (i < 0) return;
+    const [tirada] = ls.splice(i, 1);
+    salvarDepois(); pintarLinhasServ();
+    ui.toast(`Linha "${tirada.desc || 'sem descrição'}" tirada.`);
+  };
+  /** Nome já usado por um modelo (para substituir em vez de duplicar). */
+  const chaveModeloServ = (nome) => { const ms = modelosServ(); return Object.keys(ms).find((k) => norm(ms[k].nome) === norm(nome)) || null; };
+  function gravarModelosServ(meus) {
+    const r = store.get(T, ID_CONFIG);
+    salvarConfig(Object.assign({}, (r && r.dados) || {}, { modelosServ: meus }));
+  }
+  function salvarModeloServ() {
+    salvarAgora();
+    const s = est.orc.servico;
+    ui.abrirModal({
+      titulo: 'Salvar como modelo', sub: 'Os próximos orçamentos deste modelo já vêm com estas linhas, valores e imposto. Área, dias e quantidades digitadas não entram.',
+      corpo: `<label class="f req"><span>Nome do modelo</span><input class="inp" name="nome" value="${esc(s.nomeModelo || '')}" autofocus></label><p class="small muted" data-q="aviso" style="margin:8px 0 0"></p>`,
+      aoAbrir: (m) => {
+        const i = $('[name=nome]', m), av = $('[data-q=aviso]', m);
+        const ver = () => { const k = chaveModeloServ(i.value); av.textContent = !i.value.trim() ? '' : k ? `Substitui o modelo "${modelosServ()[k].nome}".` : 'Cria um modelo novo, que aparece em Novo orçamento > Serviço técnico.'; };
+        i.addEventListener('input', ver); ver();
+      },
+      botoes: [{ rot: 'Cancelar' }, { rot: 'Salvar modelo', classe: 'primary', acao: (m) => {
+        const nome = $('[name=nome]', m.el).value.trim();
+        if (!nome) { $('[name=nome]', m.el).classList.add('erro'); return; }
+        const k = chaveModeloServ(nome) || Sis.util.uid();
+        const meus = Object.assign({}, config().modelosServ || {});
+        meus[k] = { nome, imposto: s.imposto, linhas: s.linhas.map((l) => ({ desc: l.desc, forma: l.forma, valor: l.valor })) };
+        gravarModelosServ(meus);
+        Object.assign(est.orc.servico, { modelo: k, nomeModelo: nome });
+        salvarDepois(); pintarTopo();
+        m.fechar();
+        ui.toast(`Modelo "${nome}" salvo.`);
+      } }],
+    });
+  }
+  function htmlModelosServ() {
+    const ms = modelosServ();
+    return `<div class="sv-mods"><span class="secao-form">Modelos de serviço técnico</span>
+      <p class="small muted">Para mudar um modelo, abra um orçamento dele, ajuste as linhas e use Mais opções > Salvar como modelo.</p>
+      ${Object.entries(ms).map(([k, m]) => `<div class="sv-mod"><span><b>${esc(m.nome)}</b><small>${(m.linhas || []).length} linhas · imposto de ${pctTxt(m.imposto)}${m.pronto ? (m.mudado ? ' · modelo pronto, alterado por você' : ' · modelo pronto') : ''}</small></span>
+        ${m.pronto ? (m.mudado ? `<button class="btn sm" data-a="sv-mod-x" data-k="${esc(k)}">Voltar ao original</button>` : '') : `<button class="btn sm ghost" data-a="sv-mod-x" data-k="${esc(k)}">${icone('lixo')}Excluir</button>`}</div>`).join('')}</div>`;
+  }
+  A['sv-mod-x'] = async (b) => {
+    const ms = modelosServ(), m = ms[b.dataset.k]; if (!m) return;
+    const ok = await ui.confirmar(m.pronto ? { titulo: `Voltar o modelo "${m.nome}" ao original?`, msg: 'As linhas e os valores que você salvou neste modelo são desfeitos. Os orçamentos já feitos não mudam.', ok: 'Voltar ao original' }
+      : { titulo: `Excluir o modelo "${m.nome}"?`, msg: 'Os orçamentos já feitos com ele não mudam.', ok: 'Excluir', perigo: true });
+    if (!ok) return;
+    const meus = Object.assign({}, config().modelosServ || {}); delete meus[b.dataset.k];
+    gravarModelosServ(meus);
+    Sis.desenhar(true);
+  };
+
+  /* =========================================================
      Registro no sistema
      ========================================================= */
   Sis.orcamentosConfig = { card: cardConfig };
-  Sis.orcamentos = { lista: listaOrc, calcular, extenso, lerNumero, interpretarPlanilha, gerarXlsx, lerXlsx };
+  Sis.orcamentos = { lista: listaOrc, calcular, calcServ, extenso, lerNumero, interpretarPlanilha, gerarXlsx, lerXlsx };
   Sis.usosCli.push((id) => ({ n: store.lista(T, 'orcamento').filter((r) => r.dados && r.dados.clienteId === id).length, rot: 'orçamento', plural: 'orçamentos' }));
   Sis.modulo({
     id: 'orcamentos', nome: 'Orçamentos', desc: 'Planilhas por etapas e itens', icone: 'orcamento', sistema: true,
