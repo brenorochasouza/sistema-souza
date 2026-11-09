@@ -1794,8 +1794,10 @@
   }
   /** Mostra o código de acesso uma única vez, com a mensagem pronta para o WhatsApp. */
   function mostrarCodigo(a, cod, novo) {
+    // "do Condomínio X", "da Associação Y": pelo fim da primeira palavra do nome
+    const prep = (n) => (/(a|as|ção|ções|dade|ede)$/i.test(String(n || '').trim().split(/\s+/)[0] || '') ? 'da' : 'do');
     const txt = a.perfil === 'cliente'
-      ? `Olá! ${novo ? 'Este é o acesso' : 'Este é o novo código de acesso'} do ${a.nome} à Área do cliente da Souza Engenharia, com os serviços, os documentos e os diários de obra:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\nO acesso é do condomínio: qualquer pessoa da gestão pode usar.${novo ? '' : ' O código anterior deixou de funcionar.'}`
+      ? `Olá! ${novo ? 'Este é o acesso' : 'Este é o novo código de acesso'} ${prep(a.nome)} ${a.nome} à Área do cliente da Souza Engenharia. Aqui você encontra toda a documentação dos serviços contratados.\n\nPara entrar no portal, é só acessar este link:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\n\nEste acesso pode ser usado por qualquer pessoa da gestão.${novo ? '' : ' O código anterior deixou de funcionar.'} Fique à vontade para trocar o código por uma senha.`
       : `Olá, ${String(a.nome).split(/\s+/)[0]}! ${novo ? 'Seu acesso' : 'Seu novo código de acesso'} ao Diário de obra da Souza Engenharia:\n${urlDe(a.perfil)}\nUsuário: ${a.usuario}\nCódigo de acesso: ${cod}\nNo primeiro acesso, troque o código por uma senha sua em "Minha conta" e envie a imagem da sua assinatura.`;
     ui.abrirModal({
       titulo: novo ? 'Acesso criado' : 'Novo código gerado', sub: `Mande para ${a.perfil === 'cliente' ? 'a gestão do ' : ''}${esc(a.nome)}. ${novo ? '' : 'O código anterior já não funciona. '}Este código não aparece de novo: se perder, gere outro.`,
