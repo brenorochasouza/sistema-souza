@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.12`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.13`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -241,7 +241,12 @@
     const c = clienteSessao(cid);
     const sv = c.servicos || [];
     const hoje = hojeISO();
-    const vencs = sv.map((s) => ({ s, v: R.vencimento(s) })).filter((x) => x.v).map((x) => Object.assign(x, R.situacaoVenc(x.v, hoje))).sort((a, b) => a.v.localeCompare(b.v));
+    // cada cliente é um prédio: o serviço novo do mesmo tipo é a renovação do anterior
+    const sucessor = (x) => sv.filter((y) => y.id !== x.id && y.tipo === x.tipo && String(y.data || '') > String(x.data || '')).sort((a, b) => String(b.data).localeCompare(String(a.data)))[0];
+    const vencs = sv.map((s) => ({ s, v: R.vencimento(s), novo: sucessor(s) }))
+      .filter((x) => x.v && !(x.novo && x.novo.situacao === 'entregue')) // já renovado: vale o vencimento do novo
+      .map((x) => Object.assign(x, R.situacaoVenc(x.v, hoje), { renovando: !!x.s.renovando || !!x.novo }))
+      .sort((a, b) => a.v.localeCompare(b.v));
     const emDia = new Set(sv.filter((s) => { const v = R.vencimento(s); return !v || R.situacaoVenc(v, hoje).estado === 'emdia'; }).map((s) => s.tipo));
     const ofertas = R.OFERTAS.filter((o) => !emDia.has(o.tipo) && !vencs.some((x) => x.s.tipo === o.tipo)).slice(0, 6);
     const obras = obrasDo(cid);
@@ -250,9 +255,9 @@
     $('#app').innerHTML = `<div class="pt pt-area">${topo()}
       ${varios ? `<a class="btn ghost sm pt-voltar" href="#/">${icone(IC.esq)}Início</a>` : ''}
       <div class="pagehead"><div><h1>${esc(c.nome)}</h1><p>${primeiroNome() ? `Olá, ${esc(primeiroNome())}. ` : ''}Documentos e serviços da Souza Engenharia.</p></div></div>
-      ${vencs.length ? `<section class="card pt-venc"><div class="hd"><div><h3>Vencimentos</h3><p>Quando cada laudo precisa ser renovado.</p></div></div><div class="bd"><ul>${vencs.map((x) => `<li class="${x.estado}">
-          <span class="pt-venc-t"><b>${esc(nomeSv(x.s))}</b><small>${x.estado === 'vencido' ? `Venceu em ${dataBR(x.v)}` : `Vence em ${dataBR(x.v)}`}${x.estado === 'perto' ? ` · faltam ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : ''}</small></span>
-          ${x.estado === 'emdia' ? '<span class="chip ok">Em dia</span>' : `<a class="btn sm ${x.estado === 'vencido' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} O ${nomeSv(x.s)}${x.s.codigo ? ' (' + x.s.codigo + ')' : ''} ${x.estado === 'vencido' ? 'venceu' : 'vence'} em ${dataBR(x.v)}. Gostaria de agendar a renovação.`))}" target="_blank" rel="noopener">Pedir renovação</a>`}</li>`).join('')}</ul></div></section>` : ''}
+      ${vencs.length ? `<section class="card pt-venc"><div class="hd"><div><h3>Vencimentos</h3><p>Quando cada laudo precisa ser renovado.</p></div></div><div class="bd"><ul>${vencs.map((x) => `<li class="${x.renovando ? 'renovando' : x.estado}">
+          <span class="pt-venc-t"><b>${esc(nomeSv(x.s))}</b><small>${x.estado === 'vencido' ? `Venceu em ${dataBR(x.v)}` : `Vence em ${dataBR(x.v)}`}${x.estado === 'perto' && !x.renovando ? ` · faltam ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : ''}</small></span>
+          ${x.renovando ? '<span class="chip info">Renovação em andamento</span>' : x.estado === 'emdia' ? '<span class="chip ok">Em dia</span>' : `<a class="btn sm ${x.estado === 'vencido' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} O ${nomeSv(x.s)}${x.s.codigo ? ' (' + x.s.codigo + ')' : ''} ${x.estado === 'vencido' ? 'venceu' : 'vence'} em ${dataBR(x.v)}. Gostaria de agendar a renovação.`))}" target="_blank" rel="noopener">Pedir renovação</a>`}</li>`).join('')}</ul></div></section>` : ''}
       <h2 class="pt-h2">Serviços</h2>
       ${sv.length ? `<div class="pt-svs">${sv.map((s) => cardServico(c, s)).join('')}</div>` : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
       ${obras.length ? `<h2 class="pt-h2">Obras</h2><div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}

@@ -474,9 +474,10 @@
   A['cl-cf-depois'] = () => {
     const s = servico(est.contrato.sid);
     if (!s.contrato) s.contrato = { pendente: true, valor: valorDe($('#cf-valor') ? $('#cf-valor').value : 0), forma: '', parcelas: [] };
-    s.etapa = 'aprovado';
+    const novo = aprovar(s);
     salvarServico(s, true);
     est.contrato = null; est.aba = 'c'; Sis.desenhar(true);
+    if (novo) depoisDeAprovar(s.id);
   };
   A['cl-cf-salvar'] = () => {
     capturar();
@@ -484,12 +485,25 @@
     if (r.erro) { atualizarPrevia(); ui.toast(r.erro); return; }
     const s = servico(est.contrato.sid);
     s.contrato = { valor: valorDe(est.contrato.valor), forma: est.contrato.forma, parcelas: r.parcelas };
-    s.etapa = 'aprovado';
+    const novo = aprovar(s);
     salvarServico(s, true);
     est.contrato = null; est.aba = 'c';
     ui.toast('Contrato registrado.');
     Sis.desenhar(true);
+    if (novo) depoisDeAprovar(s.id);
   };
+  /** Marca como contratado; devolve true se acabou de ser aprovado (não é um "Refazer contrato"). */
+  function aprovar(s) {
+    const novo = s.etapa !== 'aprovado';
+    s.etapa = 'aprovado';
+    if (!s.aprovadoEm) s.aprovadoEm = new Date().toISOString();
+    return novo;
+  }
+  /** Contrato novo: renovação contratada sai dos avisos e o serviço pode ir para a Área do cliente. */
+  function depoisDeAprovar(sid) {
+    if (Sis.renovacoes && Sis.renovacoes.sincronizarContratos) Sis.renovacoes.sincronizarContratos();
+    if (Sis.areaCliente && Sis.areaCliente.oferecerDoContrato) Sis.areaCliente.oferecerDoContrato(sid);
+  }
   A['cl-parcela'] = (b) => { const s = servico(b.dataset.id); const p = s && s.contrato.parcelas[+b.dataset.i]; if (p) { marcarParcela(s.id, +b.dataset.i, !p.pago); Sis.desenhar(true); } };
   A['cl-renovar'] = (b) => {
     const s = servico(b.dataset.id);

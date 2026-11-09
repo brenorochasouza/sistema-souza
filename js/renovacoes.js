@@ -6,6 +6,10 @@
    Fica na tabela "comercial", tipo "laudo", grupo = cliente.
    Os serviços entregues da Área do cliente com validade entram
    aqui sozinhos (areaId = o serviço); os outros são avulsos.
+   Continuidade: o mesmo laudo (cliente + tipo) contratado de novo
+   (contrato aprovado em Clientes ou serviço novo em andamento na
+   Área do cliente) deixa o laudo em "Renovação contratada", fora
+   dos avisos, até o novo ser entregue (aí fica "Renovado").
    ========================================================= */
 (function () {
   const { $, $$, esc, norm, hojeISO, deISO, isoData, somaDias, dataBR } = Sis.util;
@@ -24,7 +28,11 @@
     const d = Object.assign({}, l); delete d.id;
     store.salvar(T, l.id, TIPO, d, l.clienteId || null);
   }
+  /** No aviso: em dia, a contatar ou vencido. */
   const ativo = (l) => !l.situacao || l.situacao === 'ativo';
+  const contratado = (l) => l.situacao === 'contratado';
+  /** Ciclo ainda aberto: no aviso ou com a renovação já contratada. */
+  const aberto = (l) => ativo(l) || contratado(l);
   /** Data de entrega + anos (29/02 vira 28/02 quando o ano não é bissexto). */
   function somaAnos(iso, anos) {
     const [a, m, d] = iso.split('-').map(Number);
@@ -44,6 +52,7 @@
     return c > hojeISO() ? c : amanha;
   }
   function situacao(l) {
+    if (contratado(l)) return { k: 'contratado', txt: `Renovação contratada${l.contratadoEm ? ' em ' + dataBR(l.contratadoEm) : ''}`, cls: 'info' };
     if (l.situacao === 'renovado') return { k: 'renovado', txt: `Renovado${l.renovadoEm ? ' em ' + dataBR(l.renovadoEm) : ''}`, cls: 'ok' };
     if (l.situacao === 'encerrado') return { k: 'encerrado', txt: 'Não renovou', cls: 'neutro' };
     const d = diasAte(l.renovacao);
@@ -55,8 +64,66 @@
   const nomeCli = (l) => clientes.nome(l.clienteId) || 'Cliente removido do cadastro';
   function contagem() {
     const ativos = laudos().filter(ativo).map((l) => situacao(l).k);
-    return { contatar: ativos.filter((k) => k === 'contatar').length, vencido: ativos.filter((k) => k === 'vencido').length, emdia: ativos.filter((k) => k === 'emdia').length };
+    return { contatar: ativos.filter((k) => k === 'contatar').length, vencido: ativos.filter((k) => k === 'vencido').length, emdia: ativos.filter((k) => k === 'emdia').length, contratado: laudos().filter(contratado).length };
   }
+
+  /* ---------------- continuidade: renovação contratada ---------------- */
+  /** Tipo de laudo em uma chave só, para os nomes de Clientes, Renovações e Área do cliente baterem. */
+  function chaveTipo(t) {
+    const n = norm(t || '');
+    if (/predial/.test(n)) return 'inspecao_predial';
+    if (/fachada/.test(n)) return 'fachada';
+    if (/spda|para.?raio|descargas? atmosf/.test(n)) return 'spda';
+    if (/avcb|bombeiro|incendio/.test(n)) return 'avcb';
+    if (/carregador|carro eletrico|veiculo eletrico/.test(n)) return 'carro_eletrico';
+    if (/imperme/.test(n)) return 'impermeabilizacao';
+    if (/fiscaliza/.test(n)) return 'fiscalizacao';
+    if (/assessoria tecnica|\batc\b/.test(n)) return 'atc';
+    return n;
+  }
+  const ORIGEM = { comercial: 'pelo contrato em Clientes', area: 'pelo serviço na Área do cliente', manual: 'marcada por você' };
+  /** Contratos do mesmo laudo depois desta entrega (cada cliente é um prédio): aprovados em Clientes
+      ou serviços em andamento na Área do cliente. O contrato que gerou este laudo não conta. */
+  function contratosDe(l, area) {
+    const k = chaveTipo(l.tipo), limite = l.entrega;
+    const proprio = l.areaId && area ? (area.find((a) => a.id === l.areaId) || {}).contratoId : null;
+    const out = [];
+    if (Sis.comercial) Sis.comercial.servicos().forEach((c) => {
+      if (c.etapa !== 'aprovado' || c.clienteId !== l.clienteId || chaveTipo(c.tipo) !== k || c.id === proprio) return;
+      const d = String(c.aprovadoEm || c.mudouEm || c.criadoEm || '').slice(0, 10);
+      if (d > limite) out.push({ origem: 'comercial', id: c.id, data: d });
+    });
+    (area || []).forEach((a) => {
+      if (a.situacao !== 'andamento' || a.carteiraId !== l.clienteId || a.chave !== k || a.id === l.areaId) return;
+      if (a.desde > limite) out.push({ origem: 'area', id: a.id, data: a.desde });
+    });
+    return out.sort((a, b) => a.data.localeCompare(b.data));
+  }
+  /** Põe ou tira os laudos de "Renovação contratada". Devolve quantos mudaram. */
+  function sincronizarContratos() {
+    if (!Sis.sync.info().ultima) return 0; // só com o sistema já sincronizado nesta sessão
+    const area = Sis.areaCliente && Sis.areaCliente.servicosArea ? Sis.areaCliente.servicosArea() : null; // null: Área do cliente ainda não carregou
+    let n = 0;
+    for (const l of laudos()) {
+      if (!aberto(l) || !l.entrega) continue;
+      if (contratado(l) && (l.contrato || {}).origem === 'manual') continue;
+      const cs = contratosDe(l, area);
+      if (ativo(l) && cs.length) {
+        Object.assign(l, { situacao: 'contratado', contratadoEm: cs[0].data, contrato: { origem: cs[0].origem, id: cs[0].id } });
+        salvar(l); n++;
+      } else if (contratado(l) && !cs.length) {
+        if ((l.contrato || {}).origem === 'area' && !area) continue; // não dá para conferir agora
+        l.situacao = 'ativo'; delete l.contratadoEm; delete l.contrato;
+        salvar(l); n++;
+      } else if (contratado(l) && cs.length && (!l.contrato || l.contrato.id !== cs[0].id)) {
+        Object.assign(l, { contratadoEm: cs[0].data, contrato: { origem: cs[0].origem, id: cs[0].id } });
+        salvar(l); n++;
+      }
+    }
+    return n;
+  }
+  let _tCt = null;
+  store.ouvir(() => { clearTimeout(_tCt); _tCt = setTimeout(sincronizarContratos, 1600); });
 
   /* ---------------- Google Agenda ---------------- */
   function linkAgenda(l) {
@@ -101,16 +168,18 @@
     return `<div class="rn-it ${s.k}">
       <div class="rn-cli"><b>${esc(nomeCli(l))}</b><span>${esc(l.tipo)}${l.obs ? ` · ${esc(l.obs)}` : ''}</span>${l.areaId ? `<a class="rn-orig" href="#/area/${esc(l.areaCliente || '')}" title="Vem do serviço na Área do cliente">${icone('pasta')}Área do cliente</a>` : ''}</div>
       <div class="rn-dt"><span><small>Entregue</small>${dataBR(l.entrega) || '-'}</span><span><small>Renovação${anosDe(l) ? ` (${anosDe(l)} ${anosDe(l) === 1 ? 'ano' : 'anos'})` : ''}</small><b>${dataBR(l.renovacao) || '-'}</b></span></div>
-      <div class="rn-st"><span class="chip ${s.cls}">${esc(s.txt)}</span>${at && l.contatoEm ? `<small>${icone('check')}Contatado em ${dataBR(l.contatoEm)}</small>` : ''}</div>
+      <div class="rn-st"><span class="chip ${s.cls}">${esc(s.txt)}</span>${at && l.contatoEm ? `<small>${icone('check')}Contatado em ${dataBR(l.contatoEm)}</small>` : ''}${contratado(l) && l.contrato ? `<small>${esc(ORIGEM[l.contrato.origem] || '')}</small>` : ''}</div>
       <div class="rn-ac">${at ? `
         <button class="btn icon ${agendado ? 'rn-ok' : ''}" data-a="rn-agenda" data-id="${esc(l.id)}" title="${agendado ? `Lembrete enviado para a agenda (${dataBR(l.agendaPara)})` : 'Adicionar lembrete na Google Agenda'}" aria-label="Google Agenda">${icone('agenda')}</button>
         <button class="btn icon ${l.contatoEm ? 'rn-ok' : ''}" data-a="rn-contato" data-id="${esc(l.id)}" title="${l.contatoEm ? 'Desmarcar contato' : 'Marcar como contatado hoje'}" aria-label="Contatado">${icone('check')}</button>
+        <button class="btn sm" data-a="rn-renovar" data-id="${esc(l.id)}">${icone('repetir')}Registrar renovação</button>` : contratado(l) && !l.areaId ? `
         <button class="btn sm" data-a="rn-renovar" data-id="${esc(l.id)}">${icone('repetir')}Registrar renovação</button>` : ''}
         <button class="btn icon" data-a="rn-editar" data-id="${esc(l.id)}" aria-label="Editar" title="Editar">${icone('editar')}</button></div>
     </div>`;
   }
   function render(el) {
     if (Sis.areaCliente) Sis.areaCliente.sincronizarRenovacoes(); // serviços entregues da Área do cliente
+    sincronizarContratos(); // renovações já contratadas saem dos avisos
     const todos = laudos();
     const hoje = hojeISO(), ano = hoje.slice(0, 4);
     const c = contagem();
@@ -119,15 +188,17 @@
     const F = {
       atencao: (l) => ativo(l) && ['contatar', 'vencido'].includes(situacao(l).k),
       emdia: (l) => ativo(l) && situacao(l).k === 'emdia',
-      todos: (l) => ativo(l),
-      historico: (l) => !ativo(l),
+      contratado: (l) => contratado(l),
+      todos: (l) => aberto(l),
+      historico: (l) => !aberto(l),
     };
     const vis = todos.filter(F[est.filtro] || F.atencao)
       .filter((l) => !t || norm(nomeCli(l) + ' ' + l.tipo + ' ' + (l.obs || '')).includes(t))
       .sort((a, b) => (est.filtro === 'historico' ? String(b.renovacao).localeCompare(String(a.renovacao)) : String(a.renovacao).localeCompare(String(b.renovacao))));
-    const segs = [['atencao', 'Contatar', c.contatar + c.vencido], ['emdia', 'Em dia', c.emdia], ['todos', 'Todos ativos', c.contatar + c.vencido + c.emdia], ['historico', 'Histórico', todos.filter((l) => !ativo(l)).length]];
+    const segs = [['atencao', 'Contatar', c.contatar + c.vencido], ['contratado', 'Contratadas', c.contratado], ['emdia', 'Em dia', c.emdia], ['todos', 'Todos ativos', c.contatar + c.vencido + c.emdia + c.contratado], ['historico', 'Histórico', todos.filter((l) => !aberto(l)).length]];
     const vazio = {
       atencao: todos.length ? `Nenhum laudo vence nos próximos ${ANTECEDENCIA} dias.` : 'Os serviços entregues na Área do cliente com validade aparecem aqui sozinhos. Laudos de fora dela entram como renovação avulsa.',
+      contratado: 'Quando o cliente contrata a renovação (contrato aprovado em Clientes ou serviço novo na Área do cliente), o laudo sai dos avisos e espera aqui até o novo ser entregue.',
       emdia: 'Nenhum laudo em dia.', todos: 'Nenhum laudo ativo.', historico: 'Laudos renovados ou não renovados aparecem aqui.',
     };
     el.innerHTML = `<div class="pagehead"><div><h1>Renovações</h1><p>Laudos recorrentes entregues e quando renovar</p></div>
@@ -135,7 +206,7 @@
       <div class="o-painel rn-painel">
         <div class="${c.contatar ? 'al' : ''}"><span>A contatar (próx. ${ANTECEDENCIA} dias)</span><b>${c.contatar}</b></div>
         <div class="${c.vencido ? 'vc' : ''}"><span>Vencidos</span><b>${c.vencido}</b></div>
-        <div><span>Em dia</span><b>${c.emdia}</b></div>
+        <div><span>Em dia</span><b>${c.emdia}</b>${c.contratado ? `<small>e ${c.contratado} ${c.contratado === 1 ? 'renovação contratada' : 'renovações contratadas'}</small>` : ''}</div>
         <div><span>Renovados em ${ano}</span><b>${renovAno}</b></div>
       </div>
       <div class="o-filtros"><div class="seg">${segs.map(([k, n, q]) => `<button data-a="rn-filtro" data-f="${k}" class="${est.filtro === k ? 'on' : ''}">${n}${q ? ` <span class="o-q">${q}</span>` : ''}</button>`).join('')}</div>
@@ -221,15 +292,31 @@
       }],
     });
   };
+  /** Botão e aviso da renovação contratada nos modais de editar. */
+  function contratacaoUI(l) {
+    if (ativo(l)) return { aviso: '', botao: { rot: 'Renovação contratada', acao: (m) => {
+      Object.assign(l, { situacao: 'contratado', contratadoEm: hojeISO(), contrato: { origem: 'manual' } }); salvar(l); m.fechar(); est.filtro = 'contratado'; Sis.desenhar(true);
+      ui.toast('Renovação contratada: o laudo saiu dos avisos.');
+    } } };
+    if (!contratado(l)) return { aviso: '', botao: null };
+    const manual = (l.contrato || {}).origem === 'manual';
+    return {
+      aviso: `<div class="rn-lig">${icone('repetir')}<span><b>Renovação contratada</b>${l.contratadoEm ? ` em ${dataBR(l.contratadoEm)}` : ''}, ${esc(ORIGEM[(l.contrato || {}).origem] || '')}. O laudo fica fora dos avisos até o novo ser entregue.${manual ? '' : ' Se o contrato for recusado ou excluído, ele volta para os avisos sozinho.'}</span></div>`,
+      botao: manual ? { rot: 'Não foi contratada', acao: (m) => {
+        l.situacao = 'ativo'; delete l.contratadoEm; delete l.contrato; salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('O laudo voltou para os avisos.');
+      } } : null,
+    };
+  }
   /** Laudo que vem da Área do cliente: cliente, laudo e datas seguem o serviço; aqui muda só a observação. */
   function editarLigado(l) {
-    const at = ativo(l);
+    const at = aberto(l), ct = contratacaoUI(l);
     const botoes = [at
       ? { rot: 'Não vai renovar', esq: true, acao: async (m) => {
         if (!(await ui.confirmar({ titulo: 'Marcar como não renovado?', msg: 'O laudo sai da lista de contatos e vai para o Histórico.', ok: 'Marcar' }))) return;
         Object.assign(l, { situacao: 'encerrado', encerradoEm: hojeISO() }); salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Movido para o Histórico.');
       } }
       : { rot: 'Reativar', esq: true, acao: (m) => { Object.assign(l, { situacao: 'ativo' }); delete l.encerradoEm; salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Laudo reativado.'); } },
+    ...(ct.botao ? [ct.botao] : []),
     { rot: 'Abrir o serviço', acao: (m) => { m.fechar(); location.hash = '#/area/' + (l.areaCliente || ''); } },
     { rot: 'Salvar', classe: 'primary', acao: (m) => {
       const o = $('[name=obs]', m.el).value.trim();
@@ -237,8 +324,8 @@
       salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Laudo atualizado.');
     } }];
     ui.abrirModal({
-      titulo: 'Editar laudo', sub: esc(`${nomeCli(l)} · ${l.tipo}`) + (at ? '' : ' · ' + esc(situacao(l).txt)),
-      corpo: `<div class="rn-lig">${icone('pasta')}<span>Este laudo vem do serviço entregue na <b>Área do cliente</b>. Entregue em <b>${dataBR(l.entrega)}</b>, renova a cada ${anosDe(l)} ${anosDe(l) === 1 ? 'ano' : 'anos'}: <b>${dataBR(l.renovacao)}</b>. Para mudar cliente, laudo ou datas, edite o serviço lá.</span></div>
+      titulo: 'Editar laudo', sub: esc(`${nomeCli(l)} · ${l.tipo}`) + (ativo(l) ? '' : ' · ' + esc(situacao(l).txt)),
+      corpo: `${ct.aviso ? ct.aviso + '<div style="height:10px"></div>' : ''}<div class="rn-lig">${icone('pasta')}<span>Este laudo vem do serviço entregue na <b>Área do cliente</b>. Entregue em <b>${dataBR(l.entrega)}</b>, renova a cada ${anosDe(l)} ${anosDe(l) === 1 ? 'ano' : 'anos'}: <b>${dataBR(l.renovacao)}</b>. Para mudar cliente, laudo ou datas, edite o serviço lá.</span></div>
         <label class="f" style="margin-top:12px"><span>Observação</span><input class="inp" name="obs" value="${esc(l.obs || '')}" placeholder="Opcional. Ex.: torres A e B"></label>`,
       botoes,
     });
@@ -246,7 +333,7 @@
   A['rn-editar'] = (b) => {
     const l = laudo(b.dataset.id); if (!l) return;
     if (l.areaId) { editarLigado(l); return; }
-    const at = ativo(l);
+    const at = aberto(l), ct = contratacaoUI(l);
     const ant = [];
     for (let x = l.anteriorId && laudo(l.anteriorId); x && ant.length < 20; x = x.anteriorId && laudo(x.anteriorId)) ant.push(x);
     let f;
@@ -259,6 +346,7 @@
       Object.assign(l, { situacao: 'encerrado', encerradoEm: hojeISO() }); salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Movido para o Histórico.');
     } });
     else botoes.push({ rot: 'Reativar', acao: (m) => { Object.assign(l, { situacao: 'ativo' }); delete l.encerradoEm; salvar(l); m.fechar(); Sis.desenhar(true); ui.toast('Laudo reativado.'); } });
+    if (ct.botao) botoes.push(ct.botao);
     botoes.push({ rot: 'Cancelar' }, {
       rot: 'Salvar', classe: 'primary', acao: (m) => {
         const v = f.ler(); if (!v) return;
@@ -270,8 +358,8 @@
       },
     });
     ui.abrirModal({
-      titulo: 'Editar laudo', sub: at ? '' : esc(situacao(l).txt),
-      corpo: camposLaudo(Object.assign({}, l, { anos: anosDe(l) })) + (ant.length ? `<div class="rn-hist"><span class="secao-form">Ciclos anteriores</span>${ant.map((x) => `<div><span>${esc(x.tipo)}</span><span>entregue em ${dataBR(x.entrega)}</span></div>`).join('')}</div>` : ''),
+      titulo: 'Editar laudo', sub: ativo(l) ? '' : esc(situacao(l).txt),
+      corpo: ct.aviso + camposLaudo(Object.assign({}, l, { anos: anosDe(l) })) + (ant.length ? `<div class="rn-hist"><span class="secao-form">Ciclos anteriores</span>${ant.map((x) => `<div><span>${esc(x.tipo)}</span><span>entregue em ${dataBR(x.entrega)}</span></div>`).join('')}</div>` : ''),
       aoAbrir: (el) => { f = ligarCampos(el, l, false); },
       botoes,
     });
@@ -309,6 +397,7 @@
 
   /* ---------------- card do Início ---------------- */
   function cardInicio() {
+    sincronizarContratos();
     const lista = laudos().filter(ativo).map((l) => ({ l, s: situacao(l) })).filter((x) => x.s.k === 'contatar' || x.s.k === 'vencido')
       .sort((a, b) => String(a.l.renovacao).localeCompare(String(b.l.renovacao)));
     if (!laudos().length) return '';
@@ -324,7 +413,7 @@
   }
 
   /* ---------------- registro ---------------- */
-  Sis.renovacoes = { cardInicio, laudos, laudo, contagem, salvar, ativo, somaAnos, excluir: (id) => store.excluir(T, id) };
+  Sis.renovacoes = { cardInicio, laudos, laudo, contagem, salvar, ativo, aberto, contratado, chaveTipo, sincronizarContratos, somaAnos, excluir: (id) => store.excluir(T, id) };
   Sis.usosCli.push((id) => ({ n: laudos().filter((l) => l.clienteId === id).length, rot: 'laudo recorrente', plural: 'laudos recorrentes' }));
   Sis.modulo({
     id: 'renovacoes', nome: 'Renovações', desc: 'Laudos recorrentes', icone: 'repetir', sistema: true, render,

@@ -136,12 +136,24 @@
      Serviço entregue, com data e "renova a cada" vira um laudo nas Renovações (areaId = serviço).
      Mudou o serviço: o laudo acompanha. Voltou para "em andamento", perdeu a validade ou foi
      excluído: o laudo sai (se foi criado daqui) ou volta a ser avulso (se já existia).
-     Um ciclo novo do mesmo laudo para o mesmo cliente fecha o anterior como renovado. */
+     Cada cliente é um prédio: um ciclo novo do mesmo laudo para o mesmo cliente fecha o anterior
+     como renovado. Serviço novo ainda em andamento deixa o anterior em "Renovação contratada". */
   const TIPO_RENOV = { spda: 'Laudo de SPDA', inspecao_predial: 'Inspeção Predial', fachada: 'Inspeção de Fachada', avcb: 'AVCB' };
   const tipoRenov = (k) => TIPO_RENOV[k] || nomeTipo(k);
-  const PERTO = 180; // dias: entregas mais próximas que isso são o mesmo ciclo
+  const PERTO = 180; // dias: avulso registrado perto da mesma entrega é o mesmo laudo
   const diasEntre = (a, b) => Math.round((Sis.util.deISO(b) - Sis.util.deISO(a)) / 86400000);
   const renova = (d) => !!(d && d.situacao === 'entregue' && /^\d{4}-\d{2}-\d{2}$/.test(d.data || '') && Number(d.renovaAnos) >= 1);
+  /** Chave do tipo para comparar com Clientes e Renovações. */
+  const chaveDe = (k) => (R.TIPOS_SERVICO.some((t) => t[0] === k) ? k : Sis.renovacoes ? Sis.renovacoes.chaveTipo(nomeTipo(k)) : k);
+  /** Serviços da área para as Renovações conferirem contratos (null enquanto a área não carregou). */
+  function servicosArea() {
+    if (!B.pronto || !B.pronto() || !B.conectado() || B.perfil() !== 'master' || !B.ultima()) return null;
+    return B.store.lista(T, 'servico').map((r) => {
+      const c = B.store.get(T, r.grupo), d = r.dados;
+      const cart = c ? c.dados.carteiraId || ((Sis.clientes.porNome(c.dados.nome) || {}).id || '') : '';
+      return { id: r.id, carteiraId: cart, chave: chaveDe(d.tipo), situacao: d.situacao, desde: String(d.data || d.criadoEm || '').slice(0, 10), contratoId: d.contratoId || '' };
+    });
+  }
   const laudoDo = (sid) => (Sis.renovacoes && Sis.renovacoes.laudos ? Sis.renovacoes.laudos().find((l) => l.areaId === sid) : null);
   /** Cliente do cadastro único ligado ao cliente da área: liga pelo nome ou cadastra, se ainda não tiver. */
   function carteiraDe(cid) {
@@ -167,16 +179,17 @@
       const ls = RN.laudos();
       const meu = ls.find((l) => l.areaId === r.id);
       if (meu) {
-        if (RN.ativo(meu) && CAMPOS.some((k) => meu[k] !== quer[k])) { RN.salvar(Object.assign(meu, quer)); out.atualizados++; }
+        if (RN.aberto(meu) && CAMPOS.some((k) => meu[k] !== quer[k])) { RN.salvar(Object.assign(meu, quer)); out.atualizados++; }
         continue;
       }
-      const mesmo = (l) => RN.ativo(l) && l.clienteId === clienteId && norm(l.tipo) === norm(quer.tipo);
+      const chave = RN.chaveTipo(quer.tipo);
+      const mesmo = (l) => RN.aberto(l) && l.clienteId === clienteId && RN.chaveTipo(l.tipo) === chave;
       // o mesmo laudo já registrado à mão (avulso ou "Registrar renovação"): passa a seguir o serviço
       const avulso = ls.find((l) => !l.areaId && mesmo(l) && Math.abs(diasEntre(l.entrega, quer.entrega)) <= PERTO);
       if (avulso) { RN.salvar(Object.assign(avulso, quer)); out.atualizados++; continue; }
       // já existe um ciclo mais novo: este serviço é de um ciclo passado e não entra
-      if (ls.some((l) => mesmo(l) && diasEntre(quer.entrega, l.entrega) > PERTO)) continue;
-      const anterior = ls.filter((l) => mesmo(l) && diasEntre(l.entrega, quer.entrega) > PERTO).sort((a, b) => String(b.entrega).localeCompare(String(a.entrega)))[0];
+      if (ls.some((l) => mesmo(l) && l.entrega > quer.entrega)) continue;
+      const anterior = ls.filter((l) => mesmo(l) && l.entrega < quer.entrega).sort((a, b) => String(b.entrega).localeCompare(String(a.entrega)))[0];
       const id = Sis.util.idCurto();
       const novo = Object.assign({ id, situacao: 'ativo', origem: 'area', criadoEm: new Date().toISOString() }, quer, d.codigo ? { obs: d.codigo } : {}, anterior ? { anteriorId: anterior.id } : {});
       RN.salvar(novo);
@@ -185,7 +198,7 @@
     }
     // serviços que deixaram de valer: excluídos, de volta a "em andamento" ou sem validade
     for (const l of RN.laudos()) {
-      if (!l.areaId || !RN.ativo(l)) continue;
+      if (!l.areaId || !RN.aberto(l)) continue;
       const r = B.store.bruto(T, l.areaId);
       if (!r || (!r.excluido && renova(r.dados))) continue; // ainda não chegou a este aparelho, ou continua valendo
       if (l.origem === 'area') {
@@ -195,8 +208,64 @@
       } else { delete l.areaId; delete l.areaCliente; RN.salvar(l); }
       out.removidos++;
     }
+    // renovação já contratada (Clientes ou serviço novo em andamento) sai dos avisos
+    if (RN.sincronizarContratos) RN.sincronizarContratos();
+    // o cliente vê "Renovação em andamento" no serviço antigo
+    const ls = RN.laudos();
+    for (const r of B.store.lista(T, 'servico')) {
+      const l = ls.find((x) => x.areaId === r.id);
+      const quer = !!(l && RN.contratado(l));
+      if (!!r.dados.renovando !== quer) {
+        const d = Object.assign({}, r.dados); if (quer) d.renovando = true; else delete d.renovando;
+        B.store.salvar(T, r.id, 'servico', d, r.grupo);
+      }
+    }
     return out;
   }
+
+  /* ---------- contrato aprovado em Clientes: criar o serviço aqui? ---------- */
+  function oferecerDoContrato(sid) {
+    if (!Sis.comercial || !B.conectado || !B.conectado() || B.perfil() !== 'master') return;
+    const cs = Sis.comercial.servico(sid); if (!cs) return;
+    if (B.store.lista(T, 'servico').some((r) => r.dados.contratoId === sid)) return; // já está na área
+    const nomeCad = Sis.clientes.nome(cs.clienteId) || '';
+    const c = clientes().find((x) => x.carteiraId === cs.clienteId) || clientes().find((x) => !x.carteiraId && norm(x.nome) === norm(nomeCad)) || null;
+    const ch = RN0().chaveTipo(cs.tipo);
+    const tp = tipos().find((t) => t.k === ch) || tipos().find((t) => norm(t.nome) === norm(cs.tipo)) || tipoPor('outro');
+    const ano = hojeISO().slice(0, 4);
+    ui.abrirModal({
+      titulo: 'Criar na Área do cliente?', sub: esc(`${nomeCad || 'Cliente'} · ${cs.tipo}`),
+      corpo: `<p class="msg" style="margin-top:0">${c ? `O serviço entra <b>em andamento</b> em <b>${esc(rotulo(c))}</b>` : 'Este cliente ainda não está na Área do cliente. Ele é criado junto, com o serviço <b>em andamento</b>'}, com as pastas do modelo e ligado a este contrato: as parcelas aparecem para o cliente.</p>
+        <div class="grid2">${c ? '' : `<label class="f"><span>Nº da pasta</span><input class="inp" name="numero" inputmode="numeric" placeholder="Ex.: 231"></label>
+          <label class="f"><span>Nome (como o cliente vê)</span><input class="inp" name="nome" value="${esc(nomeCad)}"></label>`}
+          <label class="f"><span>Tipo</span><select class="inp" name="tipo">${opcoesTipo(tp ? tp.k : 'outro')}</select></label>
+          <label class="f"><span>Código</span><input class="inp" name="codigo" value="SE${esc(c ? c.numero || '' : '')}" autocapitalize="characters" spellcheck="false"></label>
+          <label class="f span2"><span>Título (como o cliente vê)</span><input class="inp" name="titulo" value="${esc(tp && tp.k !== 'outro' ? `${tp.nome} ${ano}` : `${cs.tipo} ${ano}`)}"></label></div>`,
+      aoAbrir: (el) => {
+        const num = $('[name=numero]', el), cod = $('[name=codigo]', el);
+        if (num) num.addEventListener('input', () => { num.value = num.value.replace(/\D/g, ''); if (/^SE\d*$/i.test(cod.value)) cod.value = 'SE' + num.value; });
+      },
+      botoes: [{ rot: 'Agora não' }, { rot: 'Criar na Área do cliente', classe: 'primary', acao: (m) => {
+        const v = (n) => ($(`[name=${n}]`, m.el) ? $(`[name=${n}]`, m.el).value.trim() : '');
+        let cid = c && c.id;
+        if (!cid) {
+          if (!v('nome')) { $('[name=nome]', m.el).classList.add('erro'); return; }
+          const dup = v('numero') && clientes().find((x) => String(x.numero) === v('numero'));
+          if (dup) { ui.toast(`O número ${v('numero')} já é de ${dup.nome}.`); return; }
+          cid = uid();
+          B.store.salvar(T, cid, 'cliente', { nome: v('nome'), numero: v('numero'), obs: '', carteiraId: cs.clienteId }, null);
+        }
+        const k = v('tipo'), md = modeloDoTipo(k), t = tipoPor(k);
+        salvarServico({ id: uid(), clienteId: cid, tipo: k, tipoNome: nomeTipo(k), codigo: v('codigo'), titulo: v('titulo') || nomeTipo(k), data: hojeISO(), situacao: 'andamento',
+          renovaAnos: t && t.anos ? String(t.anos) : '', estrutura: md ? R.copiarEstrutura(md.estrutura, { semLinks: true }) : [], contratoId: cs.id, financeiro: finDe(cs), criadoEm: new Date().toISOString() });
+        m.fechar();
+        sincronizarRenovacoes();
+        ui.toast('Serviço criado na Área do cliente, em andamento.');
+        Sis.desenhar(true);
+      } }],
+    });
+  }
+  const RN0 = () => Sis.renovacoes || { chaveTipo: (x) => norm(x || '') };
   let _tFin = null;
   const agendarFin = () => { clearTimeout(_tFin); _tFin = setTimeout(() => { sincronizarFinanceiro(); sincronizarRenovacoes(); }, 1500); };
 
@@ -352,7 +421,12 @@
     return `<section class="card ac-sv" data-sv="${esc(s.id)}"><div class="hd"><div>
         <h3>${esc(s.titulo || nomeTipo(s.tipo))}</h3>
         <p>${esc([nomeTipo(s.tipo), s.codigo, s.data && dataBR(s.data)].filter(Boolean).join(' · '))}</p></div>
-        <div class="actions"><span class="chip ${sit[2]}">${sit[1]}</span>${venc ? (() => { const cls = `chip ${sv.estado === 'vencido' ? 'estourado' : sv.estado === 'perto' ? 'atencao' : 'neutro'}`, txt = `${sv.estado === 'vencido' ? 'Venceu em' : 'Vence em'} ${dataBR(venc)}`; return laudoDo(s.id) ? `<a class="${cls} ac-renov" href="#/renovacoes" title="Está nas Renovações">${icone('repetir')}${txt}</a>` : `<span class="${cls}">${txt}</span>`; })() : ''}
+        <div class="actions"><span class="chip ${sit[2]}">${sit[1]}</span>${venc ? (() => {
+          const lr = laudoDo(s.id);
+          if (lr && Sis.renovacoes.contratado(lr)) return `<a class="chip info ac-renov" href="#/renovacoes" title="O cliente já contratou a renovação">${icone('repetir')}Renovação contratada</a>`;
+          if (lr && lr.situacao === 'renovado') return `<a class="chip ok ac-renov" href="#/renovacoes" title="Já renovado">${icone('repetir')}Renovado</a>`;
+          const cls = `chip ${sv.estado === 'vencido' ? 'estourado' : sv.estado === 'perto' ? 'atencao' : 'neutro'}`, txt = `${sv.estado === 'vencido' ? 'Venceu em' : 'Vence em'} ${dataBR(venc)}`;
+          return lr ? `<a class="${cls} ac-renov" href="#/renovacoes" title="Está nas Renovações">${icone('repetir')}${txt}</a>` : `<span class="${cls}">${txt}</span>`; })() : ''}
           <button class="btn icon sm" data-a="ac-sv-editar" data-id="${esc(s.id)}" aria-label="Editar serviço" title="Editar serviço">${icone('editar')}</button></div></div>
       <div class="bd">${htmlFinanceiro(s)}
         ${s.estrutura.length ? `<ul class="ac-arvore">${htmlArvore(s.estrutura, 's:' + s.id, false)}</ul>` : '<p class="small muted">Nenhuma pasta ou documento ainda.</p>'}
@@ -608,7 +682,7 @@
     if (Sis.rota().mod === 'area' && !document.querySelector('.modal')) Sis.desenhar(true);
   });
   if (Sis.store && Sis.store.ouvir) Sis.store.ouvir(() => agendarFin());
-  Sis.areaCliente = { sincronizarFinanceiro, sincronizarRenovacoes };
+  Sis.areaCliente = { sincronizarFinanceiro, sincronizarRenovacoes, servicosArea, oferecerDoContrato };
   Sis.modulo({
     id: 'area', nome: 'Área do cliente', desc: 'Documentos e serviços dos clientes', icone: 'pasta', sistema: true,
     render,
