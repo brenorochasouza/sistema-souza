@@ -1395,7 +1395,9 @@ body.portal{background:var(--bg)}
 .pt-carregando{padding:60px 20px;text-align:center;color:var(--muted)}
 .pt{max-width:1000px;margin:0 auto;padding:0 16px 40px}
 .pt-topo{display:flex;align-items:center;gap:18px;padding:14px 0 18px;margin-bottom:6px;border-bottom:1px solid var(--line)}
-.pt-topo img{height:40px;width:auto;max-width:42%;object-fit:contain;background:#fff;border-radius:6px}
+.pt-topo img{height:44px;width:auto;max-width:40%;object-fit:contain}
+.pt-topo .pt-logo{height:60px;max-width:62%}
+.pt-topo .pt-logo-cli{background:#fff;border-radius:6px}
 .pt-topo .btn{margin-left:auto}
 .pt .pagehead{margin-top:18px}
 .pt-login .card h1{font-size:22px;font-weight:500;margin:0 0 4px}
@@ -1407,7 +1409,8 @@ body.portal{background:var(--bg)}
 .pt .r-papel{margin-top:4px}
 @media (max-width:760px){
   .pt{padding:0 12px 32px}
-  .pt-topo img{height:32px}
+  .pt-topo img{height:34px}
+  .pt-topo .pt-logo{height:48px}
   .pt .ob-topo .actions .btn span{display:none}
 }
 

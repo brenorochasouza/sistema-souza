@@ -103,7 +103,8 @@
       document.body.classList.add('portal');
       const eu = B.eu() || {};
       window.Portal.iniciarSessao({
-        nome: eu.nome || '',
+        // acesso do condomínio (sem função) não é de uma pessoa: sem "Olá, Condomínio"
+        nome: eu.funcao ? eu.nome || '' : '',
         rpc: async (fn, corpo) => {
           try { return await B.rpc(fn, corpo || {}); }
           catch (e) { throw new Error(semRede(e) ? 'Sem internet. Conecte-se para ver os diários.' : e.message); }

@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.9`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.10`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -115,7 +115,7 @@
   /* ---------------- área do cliente (usuário e senha) ---------------- */
   // Rotas: #/ início · #/c/<cliente> · #/c/<cliente>/s/<serviço> · …/s/<serviço>/p/<pasta> · …/s/<serviço>/v/<documento|contrato>
   //        #/o/<obra> · #/o/<obra>/d/<diário>
-  const topo = (o) => `<header class="pt-topo"><img src="${LOGO}" alt="Souza Engenharia">${o && o.logoCliente && o.logoCliente.url ? `<img src="${esc(o.logoCliente.url)}" alt="">` : ''}
+  const topo = (o) => `<header class="pt-topo"><img class="pt-logo" src="${LOGO}" alt="Souza Engenharia">${o && o.logoCliente && o.logoCliente.url ? `<img class="pt-logo-cli" src="${esc(o.logoCliente.url)}" alt="">` : ''}
     <span class="pt-topo-a">${est.sessao ? `<button class="btn ghost sm" data-p="senha">${icone(IC.chave)}<span>Senha</span></button>` : ''}<button class="btn ghost sm" data-p="sair">${icone(IC.sair)}Sair</button></span></header>`;
   const dec = (x) => decodeURIComponent(x);
   const enc = (x) => encodeURIComponent(x);
