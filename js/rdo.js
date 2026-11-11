@@ -991,10 +991,18 @@
     document.body.classList.add('imprimindo');
     const fim = () => { document.body.classList.remove('imprimindo'); document.title = ant; root.innerHTML = ''; window.removeEventListener('afterprint', fim); if (_redesenhar) redesenhar(); };
     window.addEventListener('afterprint', fim);
+    // a página impressa fica escondida até imprimir: foto com carregamento "lazy" nunca carregaria
     const imgs = $$('img', root);
     const espera = imgs.map((i) => (i.complete && i.naturalWidth ? Promise.resolve() : new Promise((res) => { i.onload = res; i.onerror = res; })));
-    ui.toast(imgs.length > 4 ? 'Preparando as fotos para imprimir…' : 'Preparando a impressão…');
-    Promise.race([Promise.all(espera), new Promise((res) => setTimeout(res, 15000))]).then(() => setTimeout(() => { ant = document.title; document.title = tit; window.print(); }, 80));
+    imgs.forEach((i) => { i.loading = 'eager'; i.decoding = 'sync'; });
+    ui.toast(imgs.length > 4 ? `Carregando ${imgs.length} imagens para imprimir…` : 'Preparando a impressão…');
+    // espera todas (até 2 minutos, para muitas fotos no celular) e garante que estão prontas para desenhar
+    const decodificar = () => Promise.all(imgs.map((i) => (i.naturalWidth && i.decode ? i.decode().catch(() => {}) : null)));
+    Promise.race([Promise.all(espera).then(decodificar), new Promise((res) => setTimeout(res, 120000))]).then(() => {
+      const falhas = imgs.filter((i) => !(i.complete && i.naturalWidth)).length;
+      if (falhas) ui.toast(`${falhas} ${falhas === 1 ? 'imagem não carregou' : 'imagens não carregaram'} (sem internet?). Elas ficam em branco no PDF.`);
+      setTimeout(() => { ant = document.title; document.title = tit; window.print(); }, 80);
+    });
   }
 
   /* =========================================================

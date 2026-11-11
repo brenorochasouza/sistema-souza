@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.13`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.14`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -396,8 +396,12 @@
     document.body.classList.add('imprimindo');
     const fim = () => { document.body.classList.remove('imprimindo'); document.title = ant; $('#print-root').innerHTML = ''; window.removeEventListener('afterprint', fim); };
     window.addEventListener('afterprint', fim);
+    // a página impressa fica escondida até imprimir: as fotos precisam carregar antes (sem "lazy")
     const imgs = $$('#print-root img');
-    Promise.race([Promise.all(imgs.map((i) => (i.complete && i.naturalWidth ? null : new Promise((r) => { i.onload = r; i.onerror = r; })))), new Promise((r) => setTimeout(r, 15000))])
+    const espera = imgs.map((i) => (i.complete && i.naturalWidth ? null : new Promise((r) => { i.onload = r; i.onerror = r; })));
+    imgs.forEach((i) => { i.loading = 'eager'; i.decoding = 'sync'; });
+    const decodificar = () => Promise.all(imgs.map((i) => (i.naturalWidth && i.decode ? i.decode().catch(() => {}) : null)));
+    Promise.race([Promise.all(espera).then(decodificar), new Promise((r) => setTimeout(r, 60000))])
       .then(() => setTimeout(() => window.print(), 80));
   }
 
