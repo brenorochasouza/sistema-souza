@@ -141,7 +141,7 @@
           <div class="actions" style="margin-top:10px"><button class="btn" data-a="cfg-exportar">${icone('baixar')}Baixar backup</button><button class="btn" data-a="cfg-restaurar">${icone('enviar')}Restaurar backup</button></div>
         </div></div>
         <div class="card"><div class="hd"><h3>Usar no celular como app</h3></div><div class="bd">
-          <ol class="passos"><li>Abra breno.souzaengenharia.com no Chrome do celular e entre.</li><li>Toque no menu de três pontos e escolha "Adicionar à tela inicial" ou "Instalar app".</li><li>O ícone da Souza aparece na tela do celular e abre em tela cheia, também sem internet.</li></ol>
+          <ol class="passos"><li>Abra portal.souzaengenharia.com no Chrome do celular e entre.</li><li>Toque no menu de três pontos e escolha "Adicionar à tela inicial" ou "Instalar app".</li><li>O ícone da Souza aparece na tela do celular e abre em tela cheia, também sem internet.</li></ol>
           <p class="small muted" style="margin-top:8px">No iPhone, use o Safari, toque em Compartilhar e escolha "Adicionar à Tela de Início".</p>
         </div></div>
       </div>

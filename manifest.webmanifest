@@ -1,7 +1,7 @@
 {
   "name": "Souza Engenharia",
   "short_name": "Souza",
-  "description": "Sistema interno da Souza Engenharia: agenda, clientes, orçamentos, renovações e obras.",
+  "description": "Portal da Souza Engenharia: o sistema interno, os documentos dos clientes e o diário de obra.",
   "lang": "pt-BR",
   "start_url": "./#/inicio",
   "scope": "./",

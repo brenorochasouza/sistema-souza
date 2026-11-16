@@ -76,7 +76,8 @@
   }
   const rotSemana = (seg) => { const f = somaDias(seg, 4); return `${seg.getDate()} de ${MESES[seg.getMonth()]} a ${f.getDate()} de ${MESES[f.getMonth()]}`; };
 
-  Sis.agenda = { doDia, proximo, tarefas, alternarTarefa, cat, localDe, numeroSemana };
+  const novaTarefa = (texto) => store.salvar(T, 't' + idCurto(), 'tarefa', { texto, feito: false, criadoEm: new Date().toISOString(), feitoEm: '' });
+  Sis.agenda = { doDia, proximo, tarefas, alternarTarefa, novaTarefa, cat, localDe, numeroSemana };
   Sis.usosCli.push((id) => ({ n: eventos().filter((e) => e.clienteId === id).length, rot: 'compromisso', plural: 'compromissos' }));
 
   /* ---------- semana ---------- */

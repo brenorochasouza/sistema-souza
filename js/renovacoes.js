@@ -134,7 +134,7 @@
       `Renovação do laudo em ${dataBR(l.renovacao)}.`,
       `Laudo entregue em ${dataBR(l.entrega)}.`,
       l.obs ? `Observação: ${l.obs}` : '',
-      'Sistema Souza: https://breno.souzaengenharia.com/#/renovacoes',
+      'Sistema Souza: https://portal.souzaengenharia.com/#/renovacoes',
     ].filter(Boolean).join('\n');
     let u = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(titulo)
       + '&dates=' + dia + 'T090000/' + dia + 'T093000&ctz=America/Bahia&details=' + encodeURIComponent(det);
@@ -412,8 +412,16 @@
     </div></section>`;
   }
 
+  /** Para o Início: laudos a contatar e vencidos, do mais urgente para o menos. */
+  function pendentes() {
+    sincronizarContratos();
+    return laudos().filter(ativo).map((l) => ({ l, s: situacao(l) })).filter((x) => x.s.k === 'contatar' || x.s.k === 'vencido')
+      .sort((a, b) => String(a.l.renovacao).localeCompare(String(b.l.renovacao)))
+      .map(({ l, s }) => ({ id: l.id, cliente: nomeCli(l), tipo: l.tipo, renovacao: l.renovacao, contatoEm: l.contatoEm || '', vencido: s.k === 'vencido', txt: s.txt, cls: s.cls }));
+  }
+
   /* ---------------- registro ---------------- */
-  Sis.renovacoes = { cardInicio, laudos, laudo, contagem, salvar, ativo, aberto, contratado, chaveTipo, sincronizarContratos, somaAnos, excluir: (id) => store.excluir(T, id) };
+  Sis.renovacoes = { cardInicio, pendentes, laudos, laudo, contagem, salvar, ativo, aberto, contratado, chaveTipo, sincronizarContratos, somaAnos, excluir: (id) => store.excluir(T, id) };
   Sis.usosCli.push((id) => ({ n: laudos().filter((l) => l.clienteId === id).length, rot: 'laudo recorrente', plural: 'laudos recorrentes' }));
   Sis.modulo({
     id: 'renovacoes', nome: 'Renovações', desc: 'Laudos recorrentes', icone: 'repetir', sistema: true, render,

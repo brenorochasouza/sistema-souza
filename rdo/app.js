@@ -19,6 +19,8 @@
   const semRede = (e) => e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test((e && e.message) || '');
 
   function telaLogin(msg = '', login = '') {
+    // a entrada é uma só (a tela de login do portal); aqui só no endereço antigo da Área do cliente
+    if (!AREA && !msg) { location.replace(RAIZ); return; }
     modo = 'login';
     document.body.classList.remove('portal');
     $('#app').innerHTML = `<div class="login"><div class="login-box">
@@ -90,6 +92,7 @@
   async function sair() {
     try { await B.desconectar(); } catch { /* ignora */ }
     history.replaceState(null, '', location.pathname);
+    if (!AREA) { location.replace(RAIZ); return; }
     telaLogin();
   }
 

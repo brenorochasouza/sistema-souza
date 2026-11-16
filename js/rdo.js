@@ -76,8 +76,10 @@
   const RAIZ = window.SOUZA_RAIZ || '';
   const urlEntrada = () => new URL(RAIZ + 'rdo/', location.href).href;
   /** Endereço onde os clientes entram (área do cliente). */
-  const URL_CLIENTES = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portalClientes) || 'https://clientes.souzaengenharia.com/';
-  const urlDe = (perfil) => (perfil === 'cliente' ? URL_CLIENTES : urlEntrada());
+  // um endereço só para todos: você (e-mail), a equipe e os clientes (usuário)
+  const URL_PORTAL = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portal) || 'https://portal.souzaengenharia.com/';
+  const URL_CLIENTES = URL_PORTAL;
+  const urlDe = () => URL_PORTAL;
   const clientesArea = () => B.store.dados('portal', 'cliente').sort((x, y) => (Number(y.numero) || 0) - (Number(x.numero) || 0));
   const rotaAcessos = () => (window.RdoApp ? '#/rdo/acessos' : '#/acessos');
   const nomeClienteArea = (id) => { const c = clientesArea().find((x) => x.id === id); return c ? `${c.numero ? c.numero + '. ' : ''}${c.nome}` : 'Cliente excluído'; };
@@ -171,7 +173,14 @@
       <label class="f"><span>Senha deste projeto</span><input class="inp" type="password" name="senha" autocomplete="current-password" ${relogin || email ? 'autofocus' : ''}></label>`;
   }
   async function conectarDe(raiz) {
-    await B.conectar({ url: $('[name=url]', raiz) && $('[name=url]', raiz).value, chave: $('[name=chave]', raiz) && $('[name=chave]', raiz).value, email: $('[name=email]', raiz).value, senha: $('[name=senha]', raiz).value });
+    const senha = $('[name=senha]', raiz).value;
+    await B.conectar({ url: $('[name=url]', raiz) && $('[name=url]', raiz).value, chave: $('[name=chave]', raiz) && $('[name=chave]', raiz).value, email: $('[name=email]', raiz).value, senha });
+    // senha do Diário diferente da do sistema: iguala agora, e da próxima vez o login do sistema já abre os dois
+    const doLogin = Sis.senhaDoLogin ? Sis.senhaDoLogin() : null;
+    if (doLogin && doLogin !== senha && B.perfil() === 'master') {
+      try { await B.igualarSenha(doLogin); ui.toast('Pronto: a partir de agora, a senha do sistema também abre o Diário de obra.'); }
+      catch (e) { ui.toast(/weak|at least|characters/i.test((e && e.message) || '') ? 'O Diário de obra pede senha com pelo menos 6 caracteres. Troque a senha do sistema para uma mais longa e as duas passam a ser a mesma.' : 'Não foi possível usar a senha do sistema no Diário de obra agora. Ele vai pedir a senha de novo no próximo login.', 'erro'); }
+    }
   }
   function modalConectar(relogin) {
     ui.abrirModal({
@@ -182,7 +191,7 @@
   }
   function telaConectar(el) {
     el.innerHTML = `<div class="pagehead"><div><h1>Diário de obra</h1><p>Relatórios diários, fotos e acesso do cliente</p></div></div>
-      <div class="card r-con"><div class="hd"><div><h3>Conectar ao projeto do RDO</h3><p>O Diário de obra usa um projeto do Supabase separado do resto do sistema. Entre uma vez neste aparelho.</p></div></div>
+      <div class="card r-con"><div class="hd"><div><h3>Confirme a senha do Diário de obra</h3><p>Só desta vez: a senha do Diário está diferente da do sistema. Depois de entrar, as duas ficam iguais e o login do sistema passa a abrir o Diário de obra sozinho.</p></div></div>
       <form class="bd" id="rdo-con" onsubmit="return false">${htmlConectar(false)}<div class="actions"><button class="btn primary" type="submit">Conectar</button></div></form></div>`;
     $('#rdo-con', el).addEventListener('submit', async (ev) => {
       const b = $('button[type=submit]', ev.target); b.disabled = true;
@@ -1060,7 +1069,7 @@
           <label class="f"><span>E-mail</span><input class="inp" data-as="responsavel" data-as-k="email" value="${esc(resp.email || '')}"></label></div>
       </div></section>
 
-      <section class="card"><div class="hd"><div><h3>Quem acessa esta obra</h3><p>Cada pessoa entra em <a href="${esc(urlEntrada())}" target="_blank" rel="noopener">${esc(urlEntrada().replace(/^https?:\/\//, ''))}</a> com usuário e senha.</p></div>
+      <section class="card"><div class="hd"><div><h3>Quem acessa esta obra</h3><p>Cada pessoa entra em <a href="${esc(URL_PORTAL)}" target="_blank" rel="noopener">${esc(URL_PORTAL.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a> com usuário e senha.</p></div>
         <div class="actions"><a class="btn sm" href="${rotaAcessos()}">${icone('chave')}Gerenciar acessos</a></div></div><div class="bd" data-q="acessos-obra"><p class="small muted">Carregando…</p></div>
         ${codigosAntigos ? `<div class="bd r-cod-ant"><div><b>Códigos antigos do portal</b><small>Esta obra ainda abre em /clientesobras com o código da obra (só consulta). Desligue quando os clientes já tiverem usuário e senha.</small></div><button class="btn sm" data-a="rdo-cod-desligar">Desligar códigos antigos</button></div>` : ''}
       </section>
@@ -1705,7 +1714,7 @@
     const grupo = (k, tit, txt) => { const l = lista.filter((a) => a.perfil === k); return `<section class="r-ac-g"><div class="r-ac-gh"><h3>${tit} <span class="r-cont">${l.length}</span></h3><p class="small muted">${txt}</p></div>
       ${l.length ? `<div class="r-acs">${l.map(cartao).join('')}</div>` : `<div class="card"><div class="empty">${k === 'engenharia' ? 'Ninguém da engenharia ainda.' : 'Nenhum cliente ainda.'}</div></div>`}</section>`; };
     const semHttp = (u) => u.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const sub = `A engenharia entra em ${semHttp(urlEntrada())} e os clientes em ${semHttp(URL_CLIENTES)}`;
+    const sub = `Todos entram em ${semHttp(URL_PORTAL)} com o usuário de cada um`;
     el.innerHTML = `${modulo ? `<div class="pagehead"><div><h1>Acessos</h1><p>${esc(sub)}</p></div>
         <div class="actions"><button class="btn primary" data-a="rdo-ac-novo">${icone('mais')}Novo acesso</button></div></div>`
       : `<div class="ob-topo"><a class="btn icon" href="#/rdo" aria-label="Voltar">${icone('esq')}</a><div class="tit"><b>Acessos</b><span>${esc(sub)}</span></div>
@@ -1818,6 +1827,15 @@
   }
   const acessoPor = (id) => (ACS.lista || []).find((x) => x.id === id);
   /** Para a área do cliente abrir "Novo acesso" já com o cliente marcado. */
+  /** Para o Início: diários esperando a sua aprovação e fotos deste aparelho que ainda não subiram. */
+  Sis.rdoPendencias = () => {
+    if (!B.pronto() || !B.conectado() || B.perfil() !== 'master') return null;
+    const aprovar = diariosCom((d) => d.status === 'revisao')
+      .map(({ o, d }) => ({ id: d.id, obraId: o.id, obra: o.nome, numero: d.numero, data: d.data, por: (d.elaborador && d.elaborador.nome) || '', em: (d.elaborador && d.elaborador.em) || '' }))
+      .sort((a, b) => String(a.em || a.data).localeCompare(String(b.em || b.data)));
+    const f = B.fotos.contagem();
+    return { aprovar, fotos: f.enviar || 0, erro: f.erro ? String(f.erro) : '' };
+  };
   window.RdoAcessos = {
     novo: (pre) => modalAcesso(null, pre),
     tela: telaAcessos,

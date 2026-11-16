@@ -43,6 +43,14 @@
     }));
     return out.sort((a, b) => a.venc.localeCompare(b.venc));
   }
+  /** Parcelas em aberto que vencem de hoje até daqui a `dias` dias. */
+  function parcelasAVencer(dias = 7) {
+    const hoje = hojeISO(), ate = Sis.util.isoData(Sis.util.somaDias(new Date(), dias)), out = [];
+    servicos().filter((s) => s.etapa === 'aprovado').forEach((s) => parcelasDe(s).forEach((p, i) => {
+      if (!p.pago && p.venc && p.venc >= hoje && p.venc <= ate) out.push({ servicoId: s.id, i, clienteId: s.clienteId, tipo: s.tipo, desc: p.desc, valor: p.valor, venc: p.venc });
+    }));
+    return out.sort((a, b) => a.venc.localeCompare(b.venc));
+  }
   function marcarParcela(sid, i, pago) {
     const s = servico(sid); if (!s || !s.contrato) return;
     const p = s.contrato.parcelas[i]; if (!p) return;
@@ -66,7 +74,7 @@
     return { aMarcar: g.v.filter((s) => s.etapa === 'agendar').length, visitas: g.v.length, enviar: g.e.length, aberto: g.a.length, parados };
   }
 
-  Sis.comercial = { servicos, servico, visitasAgendadas, mudarEtapa, remarcar, parcelasVencidas, marcarParcela, resumo };
+  Sis.comercial = { servicos, servico, visitasAgendadas, mudarEtapa, remarcar, parcelasVencidas, parcelasAVencer, marcarParcela, resumo };
   Sis.usosCli.push((id) => ({ n: servicos().filter((s) => s.clienteId === id).length, rot: 'serviço', plural: 'serviços' }));
 
   /* ---------- utilidades de contrato ---------- */
@@ -413,11 +421,11 @@
   /* ---------- cadastro ---------- */
   function htmlCadastro() {
     const t = norm(est.buscaCad || '');
-    const lista = clientes.lista().filter((c) => !t || norm(c.nome).includes(t) || norm(c.endereco).includes(t));
+    const lista = clientes.lista().filter((c) => !t || norm(c.nome).includes(t) || norm(c.endereco).includes(t) || String(c.numero || '') === t);
     const uso = (id) => clientes.usos(id).map((u) => `${u.n} ${u.n === 1 ? u.rot : u.plural}`).join(', ') || 'Sem uso';
-    return `<div class="cl-campo" style="margin-bottom:12px">${icone('busca')}<input id="cad-busca" placeholder="Buscar por nome ou endereço" value="${esc(est.buscaCad || '')}" autocomplete="off"></div>
+    return `<div class="cl-campo" style="margin-bottom:12px">${icone('busca')}<input id="cad-busca" placeholder="Buscar por nome, endereço ou nº da pasta" value="${esc(est.buscaCad || '')}" autocomplete="off"></div>
       <p class="small muted" style="margin:0 0 10px">${lista.length} ${lista.length === 1 ? 'cliente' : 'clientes'}. Ao corrigir um nome ou endereço aqui, a mudança vale para a agenda, a carteira e as obras.</p>
-      ${lista.length ? `<div class="cad-lista">${lista.map((c) => `<div class="cad-it"><div class="tx"><b>${ui.realce(c.nome, t)}</b><small>${c.endereco ? ui.realce(c.endereco, t) : 'Sem endereço'}</small></div>
+      ${lista.length ? `<div class="cad-lista">${lista.map((c) => `<div class="cad-it">${c.numero ? `<span class="cad-num" title="Nº da pasta">${esc(c.numero)}</span>` : ''}<div class="tx"><b>${ui.realce(c.nome, t)}</b><small>${c.endereco ? ui.realce(c.endereco, t) : 'Sem endereço'}</small></div>
         <span class="uso">${uso(c.id)}</span><button class="btn icon" data-a="cl-cad-editar" data-id="${c.id}" aria-label="Editar">${icone('editar')}</button><button class="btn icon" data-a="cl-cad-excluir" data-id="${c.id}" aria-label="Excluir">${icone('lixo')}</button></div>`).join('')}</div>`
         : '<div class="card"><div class="empty"><b>Nenhum cliente encontrado</b>Use Novo cliente para cadastrar.</div></div>'}`;
   }

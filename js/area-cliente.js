@@ -18,7 +18,7 @@
   const { ui, icone } = Sis;
   const A = Sis.acoes;
   const T = 'portal';
-  const URL_CLIENTES = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portalClientes) || 'https://clientes.souzaengenharia.com/';
+  const URL_CLIENTES = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portal) || 'https://portal.souzaengenharia.com/';
   const SITUACOES = [['andamento', 'Em andamento', 'atencao'], ['entregue', 'Entregue', 'ok']];
   const NOME_LINK = { arquivo: 'Arquivo do Drive', doc: 'Documento Google', pasta: 'Pasta do Drive', link: 'Link' };
 
@@ -236,10 +236,10 @@
     ui.abrirModal({
       titulo: 'Criar na Área do cliente?', sub: esc(`${nomeCad || 'Cliente'} · ${cs.tipo}`),
       corpo: `<p class="msg" style="margin-top:0">${c ? `O serviço entra <b>em andamento</b> em <b>${esc(rotulo(c))}</b>` : 'Este cliente ainda não está na Área do cliente. Ele é criado junto, com o serviço <b>em andamento</b>'}, com as pastas do modelo e ligado a este contrato: as parcelas aparecem para o cliente.</p>
-        <div class="grid2">${c ? '' : `<label class="f"><span>Nº da pasta</span><input class="inp" name="numero" inputmode="numeric" placeholder="Ex.: 231"></label>
+        <div class="grid2">${c ? '' : `<label class="f"><span>Nº da pasta</span><input class="inp" name="numero" inputmode="numeric" placeholder="Ex.: 231" value="${esc(Sis.clientes.numero(cs.clienteId))}"></label>
           <label class="f"><span>Nome (como o cliente vê)</span><input class="inp" name="nome" value="${esc(nomeCad)}"></label>`}
           <label class="f"><span>Tipo</span><select class="inp" name="tipo">${opcoesTipo(tp ? tp.k : 'outro')}</select></label>
-          <label class="f"><span>Código</span><input class="inp" name="codigo" value="SE${esc(c ? c.numero || '' : '')}" autocapitalize="characters" spellcheck="false"></label>
+          <label class="f"><span>Código</span><input class="inp" name="codigo" value="SE${esc(c ? c.numero || '' : Sis.clientes.numero(cs.clienteId))}" autocapitalize="characters" spellcheck="false"></label>
           <label class="f span2"><span>Título (como o cliente vê)</span><input class="inp" name="titulo" value="${esc(tp && tp.k !== 'outro' ? `${tp.nome} ${ano}` : `${cs.tipo} ${ano}`)}"></label></div>`,
       aoAbrir: (el) => {
         const num = $('[name=numero]', el), cod = $('[name=codigo]', el);
@@ -252,8 +252,11 @@
           if (!v('nome')) { $('[name=nome]', m.el).classList.add('erro'); return; }
           const dup = v('numero') && clientes().find((x) => String(x.numero) === v('numero'));
           if (dup) { ui.toast(`O número ${v('numero')} já é de ${dup.nome}.`); return; }
+          const dupCad = v('numero') && Sis.clientes.porNumero(v('numero'));
+          if (dupCad && dupCad.id !== cs.clienteId) { ui.toast(`O número ${v('numero')} já é de ${dupCad.nome} no cadastro de Clientes.`); return; }
           cid = uid();
           B.store.salvar(T, cid, 'cliente', { nome: v('nome'), numero: v('numero'), obs: '', carteiraId: cs.clienteId }, null);
+          if (v('numero') && Sis.clientes.numero(cs.clienteId) !== v('numero')) Sis.clientes.alterar(cs.clienteId, { numero: v('numero') });
         }
         const k = v('tipo'), md = modeloDoTipo(k), t = tipoPor(k);
         salvarServico({ id: uid(), clienteId: cid, tipo: k, tipoNome: nomeTipo(k), codigo: v('codigo'), titulo: v('titulo') || nomeTipo(k), data: hojeISO(), situacao: 'andamento',
@@ -266,8 +269,18 @@
     });
   }
   const RN0 = () => Sis.renovacoes || { chaveTipo: (x) => norm(x || '') };
+  /* ---------- número da pasta: o mesmo no cadastro de Clientes e na Área do cliente ---------- */
+  function sincronizarNumeros() {
+    if (!B.conectado || !B.conectado() || B.perfil() !== 'master' || !B.ultima() || !Sis.sync.info().ultima) return;
+    for (const r of B.store.lista(T, 'cliente')) {
+      const cart = r.dados.carteiraId; if (!cart || !Sis.clientes.get(cart)) continue;
+      const nCad = Sis.clientes.numero(cart), nArea = String(r.dados.numero || '');
+      if (nCad && nCad !== nArea) B.store.salvar(T, r.id, 'cliente', Object.assign({}, r.dados, { numero: nCad }), r.grupo); // vale o do cadastro
+      else if (!nCad && nArea && !Sis.clientes.porNumero(nArea)) Sis.clientes.alterar(cart, { numero: nArea }); // cadastro ainda sem número
+    }
+  }
   let _tFin = null;
-  const agendarFin = () => { clearTimeout(_tFin); _tFin = setTimeout(() => { sincronizarFinanceiro(); sincronizarRenovacoes(); }, 1500); };
+  const agendarFin = () => { clearTimeout(_tFin); _tFin = setTimeout(() => { sincronizarFinanceiro(); sincronizarRenovacoes(); sincronizarNumeros(); }, 1500); };
 
   /* ---------- árvore (serviço ou modelo) ---------- */
   const descreverNo = (n, modelo) => {
@@ -529,17 +542,18 @@
   function modalCliente(c) {
     const novo = !c;
     c = c || { nome: '', numero: '', obs: '', carteiraId: '' };
+    if (c.carteiraId && Sis.clientes.numero(c.carteiraId)) c = Object.assign({}, c, { numero: Sis.clientes.numero(c.carteiraId) });
     let sel = null;
     ui.abrirModal({
       titulo: novo ? 'Novo cliente' : 'Editar cliente',
-      sub: 'Use o mesmo número da pasta do cliente no seu Drive.',
+      sub: 'Use o mesmo número da pasta do cliente no seu Drive. Ligado à carteira, o número fica igual nos dois cadastros.',
       corpo: `<div class="grid2"><label class="f"><span>Nº da pasta</span><input class="inp" name="numero" inputmode="numeric" value="${esc(c.numero || '')}" placeholder="Ex.: 231"></label>
         <label class="f req"><span>Nome (como o cliente vê)</span><input class="inp" name="nome" value="${esc(c.nome || '')}" placeholder="Ex.: Condomínio Bosque Atlântico" autofocus></label>
         <div class="span2" data-q="cart"></div>
         <label class="f span2"><span>Observação interna (o cliente não vê)</span><input class="inp" name="obs" value="${esc(c.obs || '')}"></label></div>`,
       aoAbrir: (el) => {
         const r = $('[data-q=cart]', el);
-        if (r && Sis.seletorCliente) sel = Sis.seletorCliente(r, { clienteId: c.carteiraId || '', rotulo: 'Cliente na carteira (para ligar os contratos)', aoMudar: (id) => { const nm = $('[name=nome]', el); if (id && !nm.value.trim()) nm.value = Sis.clientes.nome(id); } });
+        if (r && Sis.seletorCliente) sel = Sis.seletorCliente(r, { clienteId: c.carteiraId || '', rotulo: 'Cliente na carteira (para ligar os contratos)', aoMudar: (id) => { const nm = $('[name=nome]', el), nu = $('[name=numero]', el); if (id && !nm.value.trim()) nm.value = Sis.clientes.nome(id); if (id && !nu.value.trim()) nu.value = Sis.clientes.numero(id); } });
       },
       botoes: [{ rot: 'Cancelar' }, { rot: novo ? 'Criar cliente' : 'Salvar', classe: 'primary', acao: (m) => {
         const v = (n) => $(`[name=${n}]`, m.el).value.trim();
@@ -547,8 +561,12 @@
         const num = v('numero').replace(/\D/g, '');
         const dup = num && clientes().find((x) => String(x.numero) === num && x.id !== c.id);
         if (dup) { ui.toast(`O número ${num} já é de ${dup.nome}.`); return; }
+        const cart = sel ? sel.valor().clienteId || '' : c.carteiraId || '';
+        const dupCad = num && cart && Sis.clientes.porNumero(num);
+        if (dupCad && dupCad.id !== cart) { ui.toast(`O número ${num} já é de ${dupCad.nome} no cadastro de Clientes.`); return; }
         const id = c.id || uid();
-        B.store.salvar(T, id, 'cliente', { nome: v('nome'), numero: num, obs: v('obs'), carteiraId: sel ? sel.valor().clienteId || '' : c.carteiraId || '' }, null);
+        B.store.salvar(T, id, 'cliente', { nome: v('nome'), numero: num, obs: v('obs'), carteiraId: cart }, null);
+        if (cart && Sis.clientes.numero(cart) !== num) Sis.clientes.alterar(cart, { numero: num }); // o mesmo número no cadastro
         m.fechar();
         if (novo) location.hash = '#/area/' + id; else Sis.desenhar(true);
       } }],
@@ -672,7 +690,7 @@
     if (!B.pronto || !B.pronto()) { el.innerHTML = '<div class="empty">Carregando…</div>'; B.iniciar().then(() => Sis.desenhar(true)).catch(() => {}); return; }
     if (!B.conectado()) { el.innerHTML = `<div class="pagehead"><div><h1>Área do cliente</h1></div></div><div class="card"><div class="empty"><b>Conecte o Diário de obra primeiro</b>A área do cliente usa o mesmo projeto do Diário de obra. <a href="#/rdo">Conectar</a></div></div>`; return; }
     if (B.perfil() !== 'master') { el.innerHTML = '<div class="card"><div class="empty"><b>Só o acesso master gerencia a área do cliente.</b></div></div>'; return; }
-    sincronizarFinanceiro(); sincronizarRenovacoes();
+    sincronizarFinanceiro(); sincronizarRenovacoes(); sincronizarNumeros();
     if (partes[0] === 'modelos') { if (partes[1]) telaModelo(el, partes[1]); else telaModelos(el); return; }
     if (partes[0]) telaCliente(el, partes[0]); else telaLista(el);
   }

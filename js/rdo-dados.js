@@ -257,6 +257,11 @@ window.RDOB = (function () {
     return j;
   }
   /** Troca a senha de quem está logado. */
+  /** Deixa a senha deste projeto igual à do login do sistema (o Supabase confere o mínimo dele). */
+  async function igualarSenha(nova) {
+    try { await req('/auth/v1/user', { method: 'PUT', json: { password: nova } }); return true; }
+    catch (e) { if (/different from the old/i.test(e.message || '')) return true; throw e; }
+  }
   async function trocarSenha(nova) {
     if (String(nova || '').length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.');
     try { await req('/auth/v1/user', { method: 'PUT', json: { password: nova } }); }
@@ -629,7 +634,7 @@ window.RDOB = (function () {
   return {
     TAB, store, sync, estado, iniciar, conectar, desconectar, config, salvarConfig, fotos, ponte, enviarArquivo, apagarArquivos, listarArquivos, urlPublica, rpc,
     nomePasta: (s) => pasta(s), blobBase64: (b) => blobBase64(b), p3: (n) => p3(n),
-    perfil, eu: () => S.eu, atualizarEu, criarLogin, trocarSenha, emailUsuario,
+    perfil, eu: () => S.eu, atualizarEu, criarLogin, trocarSenha, igualarSenha, emailUsuario,
     conectado: () => !!(S.sb && S.sessao),
     pronto: () => !!S.pronto,
     projeto: () => S.sb,

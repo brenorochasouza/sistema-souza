@@ -6,7 +6,7 @@
    cadastro único de clientes usado por todos os módulos.
    ========================================================= */
 window.Sis = (function () {
-  const VERSAO = '1.4.14';
+  const VERSAO = '1.4.15';
   const TABELAS = ['clientes', 'comercial', 'agenda', 'obras', 'orcamentos'];
 
   /* ---------------- utilidades ---------------- */
@@ -269,12 +269,36 @@ window.Sis = (function () {
     await kv.set('sessao', sessao);
     if (sessao.user) await kv.set('usuario', sessao.user.id);
   }
+  /* ---------------- login único ----------------
+     Quem entra com e-mail é você: abre o seu sistema e, com a mesma senha, já conecta o
+     Diário de obra e a Área do cliente (outro projeto do Supabase). Quem entra com usuário
+     (cliente ou equipe) vai para o portal (rdo/), que mostra só o que foi liberado. */
+  let senhaLogin = null; // só na memória, até igualar a senha do Diário de obra (nunca é gravada)
+  async function conectarRdo(email, senha) {
+    const B = window.RDOB;
+    if (!B || !B.projetoFixo || !B.projetoFixo()) return;
+    try {
+      await B.iniciar();
+      if (B.conectado() && B.perfil() === 'master') return;
+      const conta = B.conta() && B.conta().includes('@') && !/^rdo\./.test(B.conta()) ? B.conta() : email;
+      try { await B.conectar({ email: conta, senha }); }
+      catch (e) { if (conta !== email) await B.conectar({ email, senha }); else throw e; }
+    } catch (e) { senhaLogin = senha; }
+  }
+  async function entrarPortal(usuario, senha) {
+    const B = window.RDOB;
+    await B.iniciar();
+    await B.conectar({ usuario, senha });
+    location.href = 'rdo/';
+  }
   async function sair() {
     if (pend.size) {
       const ok = await ui.confirmar({ titulo: 'Sair com alterações não enviadas?', msg: `Há ${pend.size} alteração(ões) que ainda não chegaram ao servidor. Ao sair, elas serão apagadas deste aparelho.\nConecte-se à internet e aguarde a sincronização antes de sair.`, ok: 'Sair mesmo assim', perigo: true });
       if (!ok) return;
     }
     try { if (navigator.onLine) await sbFetch('/auth/v1/logout', { method: 'POST' }); } catch { /* ignora */ }
+    try { if (window.RDOB && window.RDOB.conectado()) await window.RDOB.desconectar(); } catch { /* ignora */ }
+    senhaLogin = null;
     S.sessao = null;
     await kv.del('sessao');
     await kv.del('usuario');
@@ -553,6 +577,11 @@ window.Sis = (function () {
     nome(id) { const c = clientes.get(id); return c ? c.nome : ''; },
     endereco(id) { const c = clientes.get(id); return c ? c.endereco || '' : ''; },
     porNome(nome) { const k = norm(nome); return clientes.lista().find((c) => norm(c.nome) === k) || null; },
+    /** Número da pasta no Drive (opcional: só quem vira pasta tem). */
+    numero(id) { const c = clientes.get(id); return c && c.numero ? String(c.numero) : ''; },
+    porNumero(n) { const k = String(n || '').trim(); return k ? clientes.lista().find((c) => String(c.numero || '') === k) || null : null; },
+    /** "231. Condomínio X" quando tem número. */
+    rotulo(id) { const c = clientes.get(id); return c ? `${c.numero ? c.numero + '. ' : ''}${c.nome}` : ''; },
     criar(nome, endereco = '') {
       const id = idCurto();
       store.salvar('clientes', id, 'cliente', { nome: nome.trim(), endereco: endereco.trim(), criadoEm: new Date().toISOString() });
@@ -563,7 +592,7 @@ window.Sis = (function () {
       store.salvar('clientes', id, 'cliente', Object.assign({}, r.dados, campos));
     },
     buscar(t, limite = 6) {
-      const out = clientes.lista().filter((c) => !t || norm(c.nome).includes(t) || norm(c.endereco).includes(t));
+      const out = clientes.lista().filter((c) => !t || norm(c.nome).includes(t) || norm(c.endereco).includes(t) || (c.numero && String(c.numero) === t));
       out.sort((a, b) => (norm(a.nome).startsWith(t) ? 0 : 1) - (norm(b.nome).startsWith(t) ? 0 : 1) || a.nome.localeCompare(b.nome, 'pt-BR'));
       return out.slice(0, limite);
     },
@@ -648,21 +677,26 @@ window.Sis = (function () {
   }
 
   function editarCliente(id, depois) {
-    const c = id ? clientes.get(id) : { nome: '', endereco: '' };
+    const c = id ? clientes.get(id) : { nome: '', endereco: '', numero: '' };
     ui.abrirModal({
       titulo: id ? 'Editar cliente' : 'Novo cliente',
       sub: id ? 'A alteração vale para todos os sistemas que usam este cliente.' : '',
       corpo: `<div class="grid2"><label class="f req span2"><span>Nome</span><input class="inp" name="nome" value="${esc(c.nome)}" autofocus></label>
-        <label class="f span2"><span>Endereço</span><input class="inp" name="endereco" value="${esc(c.endereco)}" placeholder="Rua, número, bairro, cidade"></label></div>`,
+        <label class="f span2"><span>Endereço</span><input class="inp" name="endereco" value="${esc(c.endereco)}" placeholder="Rua, número, bairro, cidade"></label>
+        <label class="f"><span>Nº da pasta (opcional)</span><input class="inp" name="numero" inputmode="numeric" value="${esc(c.numero || '')}" placeholder="Ex.: 231"></label>
+        <p class="small muted" style="align-self:end;margin:0 0 10px">Só para quem já tem pasta no Drive. É o mesmo número da Área do cliente.</p></div>`,
       botoes: [{ rot: 'Cancelar' }, {
         rot: 'Salvar', classe: 'primary', acao: (m) => {
           const nome = $('[name=nome]', m.el).value.trim();
           const endereco = $('[name=endereco]', m.el).value.trim();
+          const numero = $('[name=numero]', m.el).value.replace(/\D/g, '');
           if (!nome) { $('[name=nome]', m.el).classList.add('erro'); return; }
           const outro = clientes.porNome(nome);
           if (outro && outro.id !== id) { $('[name=nome]', m.el).classList.add('erro'); ui.toast('Já existe um cliente com esse nome.'); return; }
+          const comNum = clientes.porNumero(numero);
+          if (comNum && comNum.id !== id) { $('[name=numero]', m.el).classList.add('erro'); ui.toast(`O número ${numero} já é de ${comNum.nome}.`); return; }
           let nid = id;
-          if (id) clientes.alterar(id, { nome, endereco }); else nid = clientes.criar(nome, endereco);
+          if (id) clientes.alterar(id, { nome, endereco, numero }); else { nid = clientes.criar(nome, endereco); if (numero) clientes.alterar(nid, { numero }); }
           m.fechar();
           ui.toast(id ? 'Cliente atualizado.' : 'Cliente cadastrado.');
           if (depois) depois(nid);
@@ -792,17 +826,17 @@ window.Sis = (function () {
   };
 
   /* ---------------- login ---------------- */
-  function telaLogin(msgErro = '') {
+  function telaLogin(msgErro = '', loginAnterior = '') {
     const precisaProjeto = !S.sb;
     $('#app').innerHTML = `<div class="login"><div class="login-box">
       <img src="img/logo.png?v=${VERSAO}" alt="Souza Engenharia" class="login-logo">
       <form class="card" id="form-login" onsubmit="return false"><div class="bd">
         <h1>Entrar</h1>
-        <p class="muted small">${precisaProjeto ? 'Primeiro acesso neste aparelho: informe o projeto do Supabase e o seu login.' : 'Use o seu e-mail e senha. Depois do primeiro acesso, o aparelho continua conectado.'}</p>
+        <p class="muted small">${precisaProjeto ? 'Primeiro acesso neste aparelho: informe o projeto do Supabase e o seu login.' : 'Entre com o usuário e o código de acesso que a Souza Engenharia enviou, ou com o seu e-mail e senha.'}</p>
         ${precisaProjeto ? `<label class="f"><span>Endereço do projeto (Project URL)</span><input class="inp" id="lg-url" placeholder="https://xxxxxxxx.supabase.co" autocapitalize="off" spellcheck="false"></label>
         <label class="f"><span>Chave pública (publishable ou anon)</span><input class="inp" id="lg-chave" autocapitalize="off" spellcheck="false"></label>` : ''}
-        <label class="f"><span>E-mail</span><input class="inp" type="email" id="lg-email" autocomplete="username" autocapitalize="off"></label>
-        <label class="f"><span>Senha</span><input class="inp" type="password" id="lg-senha" autocomplete="current-password"></label>
+        <label class="f"><span>Usuário ou e-mail</span><input class="inp" id="lg-email" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(loginAnterior)}"></label>
+        <label class="f"><span>Senha ou código de acesso</span><input class="inp" type="password" id="lg-senha" autocomplete="current-password"></label>
         ${msgErro ? `<p class="aviso-campo">${esc(msgErro)}</p>` : ''}
         <button class="btn primary grande" type="submit" id="lg-entrar">Entrar</button>
       </div></form>
@@ -817,13 +851,19 @@ window.Sis = (function () {
           S.sb = { url, chave };
           await kv.set('supabase', S.sb);
         }
-        await entrar($('#lg-email').value, $('#lg-senha').value);
+        const login = $('#lg-email').value.trim(), senha = $('#lg-senha').value;
+        if (!login || !senha) throw new Error(login ? 'Informe a senha.' : 'Informe o usuário ou o e-mail.');
+        if (!login.includes('@') && window.RDOB) { await entrarPortal(login, senha); return; }
+        await entrar(login, senha);
+        await conectarRdo(login, senha);
         await abrirSistema();
       } catch (e) {
+        const l = $('#lg-email') ? $('#lg-email').value.trim() : '';
         if (precisaProjeto && !S.sessao) { S.sb = null; await kv.del('supabase'); }
-        telaLogin(e.message);
+        telaLogin(e.message, l);
       }
     });
+    if (loginAnterior && !precisaProjeto) setTimeout(() => { const s = $('#lg-senha'); if (s) s.focus(); }, 30);
   }
 
   /* ---------------- início ---------------- */
@@ -838,14 +878,69 @@ window.Sis = (function () {
     const c = window.SOUZA_CONFIG || {};
     S.sb = c.supabaseUrl && c.supabaseChave ? { url: c.supabaseUrl.replace(/\/+$/, ''), chave: c.supabaseChave } : (await kv.get('supabase')) || null;
     S.sessao = (await kv.get('sessao')) || null;
-    if (!S.sb || !S.sessao) { telaLogin(); return; }
+    if (!S.sb || !S.sessao) {
+      // cliente ou equipe já conectados neste aparelho: vão direto para o portal
+      if (window.RDOB) {
+        try { await window.RDOB.iniciar(); if (window.RDOB.conectado() && window.RDOB.eu() && window.RDOB.perfil() && window.RDOB.perfil() !== 'master') { location.replace('rdo/'); return; } } catch { /* segue para o login */ }
+      }
+      telaLogin(); return;
+    }
     await abrirSistema();
   }
 
+  /* ---------------- mudança de endereço ---------------- */
+  /** Roda no endereço antigo: envia o que só existe neste aparelho (alterações e fotos do diário)
+      e depois leva para o endereço novo, no mesmo caminho. */
+  async function mudar(destino) {
+    const base = destino.replace(/\/*$/, '/');
+    const ir = () => location.replace(base + location.pathname.replace(/^\/+/, '') + location.search + location.hash);
+    const B = window.RDOB;
+    let principal = false, rdo = false;
+    try {
+      const c = window.SOUZA_CONFIG || {};
+      S.sb = c.supabaseUrl && c.supabaseChave ? { url: c.supabaseUrl.replace(/\/+$/, ''), chave: c.supabaseChave } : (await kv.get('supabase')) || null;
+      S.sessao = (await kv.get('sessao')) || null;
+      if (S.sb && S.sessao) { await store.carregar(); principal = true; }
+      if (B) { await B.iniciar(); rdo = B.conectado(); }
+    } catch (e) { console.error(e); }
+    const falta = () => {
+      const f = rdo ? B.fotos.contagem() : { enviar: 0, erro: null };
+      return { reg: (principal ? pend.size : 0) + (rdo ? B.pendentes() : 0), fotos: f.enviar, erro: S.erroSync || f.erro || '' };
+    };
+    let f = falta();
+    if (!f.reg && !f.fotos) { ir(); return; }
+    const logo = (window.SOUZA_RAIZ || '') + 'img/logo.png';
+    const pintar = (rodadas) => {
+      const itens = [f.reg ? `${f.reg} ${f.reg === 1 ? 'alteração' : 'alterações'}` : '', f.fotos ? `${f.fotos} ${f.fotos === 1 ? 'foto' : 'fotos'} do Diário de obra` : ''].filter(Boolean).join(' e ');
+      $('#app').innerHTML = `<div class="login"><div class="login-box"><img src="${esc(logo)}" alt="Souza Engenharia" class="login-logo">
+        <div class="card"><div class="bd"><h1>O sistema mudou de endereço</h1>
+        <p class="muted" style="margin:8px 0 14px">Agora é ${esc(new URL(base).host)}. Antes de ir, este aparelho está enviando o que ainda não tinha subido. Deixe esta tela aberta.</p>
+        <p style="margin:0 0 10px"><b>Falta enviar: ${itens}</b></p>
+        ${!navigator.onLine ? '<p class="aviso-campo" style="margin:0 0 10px">Sem internet agora. O envio continua sozinho quando a conexão voltar.</p>' : ''}
+        ${rodadas >= 3 && f.erro ? `<p class="aviso-campo" style="margin:0 0 10px">${esc(String(f.erro).slice(0, 200))}</p>` : ''}
+        ${rodadas >= 3 ? `<button class="btn" type="button" id="mud-ir" style="margin-top:6px">Ir para o endereço novo assim mesmo</button>
+          <p class="tiny muted">O que não subiu continua guardado neste aparelho e volta a ser enviado sempre que este endereço antigo for aberto.</p>` : ''}
+        </div></div></div></div>`;
+      const b = $('#mud-ir'); if (b) b.addEventListener('click', ir);
+    };
+    for (let rodadas = 0; ; rodadas++) {
+      pintar(rodadas);
+      try {
+        if (principal) await sync.agora();
+        if (rdo) { await B.sync.agora(); await B.fotos.processar(); }
+      } catch (e) { console.error(e); }
+      f = falta();
+      if (!f.reg && !f.fotos) { ir(); return; }
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+  }
+
   return {
-    VERSAO, TABELAS,
+    VERSAO, TABELAS, mudar,
     util: { $, $$, esc, norm, r2, brl, brl0, uid, idCurto, p2, isoData, hojeISO, deISO, somaDias, segundaDe, MESES, MESES_LONGOS, DIAS, DIAS_LONGOS, dataBR, dataCurta, dataLonga, diasDesde, minutos, hhmm, duracaoTexto, kvLocal },
     icone, ICONES, kv, store, sync, ui, acoes, clientes, usosCli, seletorCliente, editarCliente,
+    /** Senha do login, se o Diário de obra não abriu com ela (para igualar as duas uma vez). Lida uma vez só. */
+    senhaDoLogin: () => { const s = senhaLogin; senhaLogin = null; return s; },
     modulo, modulos, modPor, naBarra, PRINCIPAIS, ir, desenhar, shell, sair, ligarBusca, iniciar,
     rota: () => rotaAtual,
   };
