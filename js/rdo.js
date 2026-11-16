@@ -336,7 +336,7 @@
       const lista = (await B.rpc('rdo_acessos_lista')) || [];
       const daObra = lista.filter((a) => (a.obras || []).includes(o.id));
       if (!alvo()) return;
-      alvo().innerHTML = daObra.length ? `<div class="r-ac-mini">${daObra.map((a) => `<span class="r-ac-p ${a.ativo ? '' : 'off'}">${icone('pessoa')}<b>${esc(a.nome)}</b><small>${a.perfil === 'engenharia' ? 'Engenharia' : 'Cliente'}${a.ativo ? '' : ' · desativado'}</small></span>`).join('')}</div>`
+      alvo().innerHTML = daObra.length ? `<div class="r-ac-mini">${daObra.map((a) => `<span class="r-ac-p ${a.ativo ? '' : 'off'}">${icone('pessoa')}<b>${esc(a.perfil === 'cliente' ? a.usuario : a.nome)}</b><small>${a.perfil === 'engenharia' ? 'Engenharia' : 'Cliente'}${a.ativo ? '' : ' · desativado'}</small></span>`).join('')}</div>`
         : '<p class="small muted">Ninguém além de você. Em "Gerenciar acessos" você cria o acesso da engenharia e dos clientes e libera esta obra.</p>';
     } catch (e) { if (alvo()) alvo().innerHTML = `<p class="small muted">Não foi possível carregar os acessos: ${esc(e.message)}</p>`; }
   }
@@ -1704,11 +1704,22 @@
     const lista = ACS.lista || [];
     const nomeObra = (id) => { const o = obra(id); return o ? o.nome : 'Obra excluída'; };
     const situacao = (a) => (!a.ativo ? ['Desativado', 'neutro'] : !a.ativado ? ['Login não criado', 'atencao'] : a.ultimo_acesso ? [`Último acesso ${R.dataHora(a.ultimo_acesso)}`, 'ok'] : ['Ainda não entrou', 'neutro']);
-    const cartao = (a) => `<div class="card r-ac ${a.ativo ? '' : 'off'}"><div class="r-ac-l"><span class="r-ac-av">${esc((a.nome || '?').trim().split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase())}</span>
+    const iniciais = (t, sep) => (String(t || '?').trim().split(sep).filter(Boolean).map((x) => x[0]).slice(0, 2).join('') || '?').toUpperCase();
+    // cliente não tem nome de pessoa (o síndico muda): o título é o usuário e os condomínios ficam só nas etiquetas
+    const topoCartao = (a) => {
+      if (a.perfil === 'cliente') {
+        const n = (a.clientes || []).length, o = (a.obras || []).length;
+        const qtd = [n ? `${n} ${n === 1 ? 'condomínio' : 'condomínios'}` : '', o ? `${o} ${o === 1 ? 'obra' : 'obras'}` : ''].filter(Boolean).join(' e ');
+        return `<span class="r-ac-av">${esc(iniciais(a.usuario, /[._\-\s]+/))}</span>
+        <div class="r-ac-t"><b>${esc(a.usuario)}</b><small>Cliente${qtd ? `, ${qtd}` : ''}</small></div>`;
+      }
+      return `<span class="r-ac-av">${esc(iniciais(a.nome, /\s+/))}</span>
         <div class="r-ac-t"><b>${esc(a.nome)}</b><small>${esc([a.funcao, a.registro].filter(Boolean).join(' · ') || nomePerfil(a.perfil))}</small>
-          <small>Usuário <code>${esc(a.usuario)}</code></small></div>
+          <small>Usuário <code>${esc(a.usuario)}</code></small></div>`;
+    };
+    const cartao = (a) => `<div class="card r-ac ${a.ativo ? '' : 'off'}"><div class="r-ac-l">${topoCartao(a)}
         <span class="chip ${situacao(a)[1]}">${esc(situacao(a)[0])}</span></div>
-      <div class="r-ac-o">${(a.clientes || []).map((id) => `<span class="chip previsto">${icone('pasta')}${esc(nomeClienteArea(id))}</span>`).join('')}${(a.obras || []).map((id) => `<span class="chip neutro">${esc(nomeObra(id))}</span>`).join('')}${!(a.obras || []).length && !(a.clientes || []).length ? `<span class="small muted">${a.perfil === 'cliente' ? 'Nenhum cliente liberado' : 'Nenhuma obra liberada'}</span>` : ''}</div>
+      <div class="r-ac-o">${(a.clientes || []).map((id) => `<span class="chip previsto">${icone('pasta')}${esc(nomeClienteArea(id))}</span>`).join('')}${(a.obras || []).map((id) => `<span class="chip neutro">${icone('obras')}${esc(nomeObra(id))}</span>`).join('')}${!(a.obras || []).length && !(a.clientes || []).length ? `<span class="small muted">${a.perfil === 'cliente' ? 'Nenhum cliente liberado' : 'Nenhuma obra liberada'}</span>` : ''}</div>
       <div class="actions"><button class="btn sm" data-a="rdo-ac-editar" data-id="${esc(a.id)}">${icone('editar')}Editar</button><button class="btn sm" data-a="rdo-ac-codigo" data-id="${esc(a.id)}">${icone('chave')}${a.ativado ? 'Novo código' : 'Criar login'}</button>
         <button class="btn sm ghost" data-a="rdo-ac-ativo" data-id="${esc(a.id)}">${a.ativo ? 'Desativar' : 'Reativar'}</button></div></div>`;
     const grupo = (k, tit, txt) => { const l = lista.filter((a) => a.perfil === k); return `<section class="r-ac-g"><div class="r-ac-gh"><h3>${tit} <span class="r-cont">${l.length}</span></h3><p class="small muted">${txt}</p></div>
