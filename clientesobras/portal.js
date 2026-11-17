@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.16`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.17`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -261,8 +261,10 @@
       <h2 class="pt-h2">Serviços</h2>
       ${sv.length ? `<div class="pt-svs">${sv.map((s) => cardServico(c, s)).join('')}</div>` : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
       ${obras.length ? `<h2 class="pt-h2">Obras</h2><div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}
-      ${ofertas.length ? `<h2 class="pt-h2">Outros serviços da Souza Engenharia</h2><div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}"><b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
-          <a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a></div>`).join('')}</div>` : ''}
+      ${ofertas.length ? `<section class="pt-vit" aria-labelledby="pt-vit-t"><div class="pt-vit-h"><h2 id="pt-vit-t">Outros serviços da Souza Engenharia</h2>
+          <p>A mesma equipe técnica que cuida dos documentos do seu condomínio. Escolha o serviço e peça o orçamento pelo WhatsApp.</p></div>
+        <div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}">${o.tipo === 'atc' ? '<span class="pt-of-tag">Recomendado</span>' : ''}<b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
+          <a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a></div>`).join('')}</div></section>` : ''}
     </div>`;
     window.scrollTo(0, 0);
   }
