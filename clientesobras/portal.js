@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.17`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.18`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -38,6 +38,77 @@
     cadeado: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     relogio: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   };
+  IC.check = '<path d="m5 12.5 4.5 4.5L19 7.5"/>';
+  IC.whats = '<path d="M20.5 11.6A8.6 8.6 0 0 1 8 19.2L3.5 20.5l1.3-4.4A8.6 8.6 0 1 1 20.5 11.6z"/>';
+
+  /** Página explicativa de cada serviço oferecido (o "Saiba mais" da vitrine). */
+  const PAGINAS = {
+    atc: {
+      lead: 'Um engenheiro acompanhando o condomínio o ano todo, para o síndico decidir com segurança sobre manutenção, obras e contratações.',
+      serve: 'A ATC coloca a Souza Engenharia ao lado da gestão do condomínio de forma contínua. Em vez de chamar um engenheiro só quando o problema aparece, o síndico passa a contar com orientação técnica para planejar a manutenção, avaliar o que precisa ser feito e acompanhar as obras, evitando gastos desnecessários e retrabalho.',
+      quando: ['O condomínio tem manutenções e obras frequentes e precisa de alguém para orientar as decisões.', 'O síndico quer um plano de manutenção organizado e cumprido ao longo do ano.', 'O condomínio precisa de laudos com ART com regularidade, como SPDA, inspeção predial e fachadas.'],
+      recebe: ['Orientação técnica contínua na manutenção e nas obras do condomínio.', 'Inspeção anual das fachadas com drone.', '25% de desconto nos laudos com ART da Souza Engenharia.', 'Relatórios e documentos reunidos aqui na Área do cliente.'],
+      passos: ['Conversa inicial para entender o condomínio e as prioridades da gestão.', 'Proposta com o escopo e a mensalidade adequados ao porte do condomínio.', 'Visita técnica de reconhecimento e organização das pendências.', 'Acompanhamento contínuo, atendendo às demandas do síndico.'],
+      base: 'ABNT NBR 5674 (manutenção de edificações) e ABNT NBR 16747 (inspeção predial).',
+    },
+    inspecao_predial: {
+      lead: 'Uma avaliação completa do condomínio, que mostra o estado de conservação de cada sistema e o que precisa ser feito primeiro.',
+      serve: 'A inspeção predial avalia as condições técnicas, de uso e de manutenção da edificação: estrutura, fachadas, coberturas, impermeabilizações, instalações e áreas comuns. O laudo classifica cada problema encontrado pelo grau de urgência e indica a correção, para o síndico planejar a manutenção e as obras com base técnica e prestar contas aos condôminos.',
+      quando: ['Para montar ou revisar o plano de manutenção do condomínio.', 'Antes de definir as obras do ano e a previsão orçamentária.', 'Na troca de gestão, para o novo síndico conhecer a situação real do prédio.', 'Ao surgirem infiltrações, fissuras, desplacamentos ou outros sinais de desgaste.'],
+      recebe: ['Laudo técnico em PDF, com ART.', 'Cada anomalia com registro fotográfico, causa provável, consequência e recomendação técnica.', 'Prioridades de correção, do mais urgente ao que pode ser planejado.', 'Pasta com todas as fotos em alta qualidade.'],
+      passos: ['Levantamento dos documentos e conversa com o síndico sobre o histórico do prédio.', 'Vistoria técnica das áreas comuns e dos sistemas da edificação.', 'Análise das anomalias e elaboração do laudo.', 'Entrega aqui na Área do cliente, com os esclarecimentos que a gestão precisar.'],
+      base: 'ABNT NBR 16747 (inspeção predial) e ABNT NBR 5674 (manutenção de edificações).',
+    },
+    fachada: {
+      lead: 'O mapeamento completo das fachadas, para o condomínio saber o que precisa ser recuperado, como fazer e quanto deve custar antes de contratar a obra.',
+      serve: 'Com acesso por alpinismo industrial, a equipe percorre as fachadas e registra cada anomalia: fissuras, desplacamentos, falhas de rejunte e de vedação, infiltrações e corrosão. O resultado é um laudo com o diagnóstico e o plano de recuperação, que serve de base para a assembleia e para pedir propostas às empresas de forma justa e comparável.',
+      quando: ['O condomínio quer recuperar a fachada e precisa saber por onde começar.', 'Apareceram peças soltas, quedas de revestimento ou infiltrações pelas paredes externas.', 'A obra precisa ser levada para aprovação em assembleia.'],
+      recebe: ['Laudo em PDF com o mapeamento das anomalias e as causas prováveis.', 'Detalhamento executivo da recuperação.', 'Planilha com o escopo da obra e a previsão de custo pelos valores praticados no mercado.', 'Termo de referência para contratar as empresas.', 'Pasta com todas as fotos em alta qualidade.'],
+      passos: ['Visita para avaliar os acessos e planejar a inspeção.', 'Inspeção das fachadas com alpinistas, acompanhada pela engenharia e pela segurança do trabalho.', 'Elaboração do laudo, da planilha e do termo de referência.', 'Entrega aqui na Área do cliente.'],
+      base: 'ABNT NBR 16747 (inspeção predial) e ABNT NBR 13755 (revestimento cerâmico de fachadas).',
+    },
+    spda: {
+      lead: 'A inspeção do para-raios do condomínio, com laudo e ART, pedida pelo Corpo de Bombeiros na renovação do AVCB.',
+      serve: 'O SPDA (sistema de proteção contra descargas atmosféricas) protege o prédio e as pessoas quando cai um raio. Com o tempo, conexões se soltam, peças oxidam e o aterramento perde eficiência. A inspeção verifica se o sistema continua funcionando como deve e aponta o que precisa ser corrigido.',
+      quando: ['Na renovação do AVCB, quando o Corpo de Bombeiros pede o laudo do SPDA.', 'Periodicamente, como prevê a ABNT NBR 5419.', 'Depois de obras na cobertura ou na fachada, ou quando um raio atinge o prédio.'],
+      recebe: ['Laudo técnico em PDF, com ART.', 'Inspeção de captores, descidas, conexões e aterramento, com registro fotográfico.', 'Medições de continuidade elétrica do sistema.', 'Lista do que precisa ser corrigido, quando houver.'],
+      passos: ['Agendamento da visita com a administração do condomínio.', 'Inspeção e medições no local.', 'Elaboração do laudo com ART.', 'Entrega aqui na Área do cliente.'],
+      base: 'ABNT NBR 5419 (proteção contra descargas atmosféricas).',
+    },
+    avcb: {
+      lead: 'O projeto de segurança contra incêndio e todo o acompanhamento até o condomínio receber o AVCB do Corpo de Bombeiros.',
+      serve: 'O AVCB (Auto de Vistoria do Corpo de Bombeiros) atesta que a edificação tem as medidas de segurança contra incêndio e pânico exigidas. Sem ele, o condomínio fica irregular, e a responsabilidade recai sobre o síndico. A Souza Engenharia faz o projeto, aprova no Corpo de Bombeiros e acompanha as adequações até a vistoria.',
+      quando: ['O condomínio não tem AVCB ou ele está vencido.', 'Reformas ou mudanças de uso alteraram as exigências do prédio.', 'O Corpo de Bombeiros notificou o condomínio.'],
+      recebe: ['Levantamento das medidas de segurança existentes e do que falta.', 'Projeto de segurança contra incêndio e pânico, e projeto de SPDA quando exigido.', 'Acompanhamento da análise e da aprovação no Corpo de Bombeiros.', 'Orientação nas adequações e acompanhamento da vistoria até a emissão do AVCB.', 'Projeto aprovado e documentos reunidos aqui na Área do cliente.'],
+      passos: ['Vistoria no condomínio e levantamento da documentação.', 'Elaboração do projeto.', 'Protocolo e aprovação no Corpo de Bombeiros.', 'Adequações no prédio, com orientação técnica.', 'Vistoria do Corpo de Bombeiros e emissão do AVCB.'],
+      base: 'Lei Estadual nº 12.929/2013, Decreto nº 16.302/2015 e instruções técnicas do Corpo de Bombeiros Militar da Bahia.',
+    },
+    impermeabilizacao: {
+      lead: 'Do diagnóstico da infiltração à obra concluída, com projeto, execução e acompanhamento técnico.',
+      serve: 'Infiltrações em coberturas, piscinas, playgrounds, jardins e garagens comprometem a estrutura e geram reclamações dos moradores. A Souza Engenharia identifica a origem do problema, define o sistema de impermeabilização adequado para cada área e executa a obra com controle técnico, para resolver de vez e não apenas remendar.',
+      quando: ['Há infiltrações, manchas ou goteiras abaixo de lajes, piscinas e jardins.', 'A impermeabilização chegou ao fim da vida útil.', 'O condomínio vai reformar pisos e revestimentos de áreas molhadas ou externas.'],
+      recebe: ['Diagnóstico da origem das infiltrações.', 'Manual executivo com o sistema de impermeabilização e as etapas da obra.', 'Execução com equipe especializada e engenheiro responsável.', 'Teste de estanqueidade antes da proteção final.', 'Diário de obra com fotos, acompanhado aqui na Área do cliente.'],
+      passos: ['Vistoria e diagnóstico.', 'Proposta com o escopo e o manual executivo.', 'Execução da obra, com diário de obra no portal.', 'Teste de estanqueidade e entrega.'],
+      base: 'ABNT NBR 9575 (projeto de impermeabilização) e ABNT NBR 9574 (execução de impermeabilização).',
+    },
+    carro_eletrico: {
+      lead: 'A avaliação técnica que mostra se a instalação elétrica do condomínio comporta carregadores, quantos e em que condições.',
+      serve: 'Cada vez mais moradores pedem para instalar carregador na garagem. Sem uma avaliação, o condomínio corre o risco de sobrecarregar a instalação, criar risco de incêndio ou negar um pedido sem base técnica. O laudo mostra a capacidade disponível, as adequações necessárias e as regras de segurança para as instalações.',
+      quando: ['Um morador pediu para instalar um carregador.', 'O tema vai para a assembleia ou o condomínio quer criar regras de uso.', 'O condomínio quer planejar vagas com recarga para o futuro.'],
+      recebe: ['Avaliação da entrada de energia, dos quadros e da demanda da instalação.', 'Capacidade para carregadores e as adequações necessárias.', 'Requisitos de segurança para as instalações individuais e coletivas.', 'Laudo técnico com ART.'],
+      passos: ['Levantamento dos documentos e das informações da instalação.', 'Vistoria técnica nas instalações elétricas e na garagem.', 'Análise da capacidade e elaboração do laudo.', 'Entrega aqui na Área do cliente.'],
+      base: 'ABNT NBR 5410 (instalações elétricas de baixa tensão), ABNT NBR 17019 (recarga de veículos elétricos) e exigências do Corpo de Bombeiros da Bahia.',
+    },
+    fiscalizacao: {
+      lead: 'Um engenheiro do lado do condomínio, conferindo se a obra contratada está sendo feita como deve.',
+      serve: 'Quando o condomínio contrata uma empresa para uma obra, alguém precisa garantir que o serviço segue o escopo, a qualidade e o prazo combinados. A fiscalização acompanha a execução, confere as medições antes de cada pagamento e registra tudo, para o síndico pagar pelo que foi feito e receber a obra com segurança.',
+      quando: ['Obras de fachada, impermeabilização, reforma de áreas comuns ou recuperação estrutural.', 'O contrato prevê pagamentos por etapa ou por medição.', 'O síndico precisa prestar contas da obra aos condôminos.'],
+      recebe: ['Visitas técnicas periódicas à obra.', 'Conferência das medições antes dos pagamentos.', 'Registro das não conformidades e acompanhamento das correções.', 'Diário de obra com fotos, acompanhado aqui na Área do cliente.', 'Acompanhamento até o recebimento final da obra.'],
+      passos: ['Análise do contrato, do escopo e do cronograma.', 'Acompanhamento da execução e das medições.', 'Relatórios e diário de obra no portal.', 'Vistoria de recebimento da obra.'],
+      base: '',
+    },
+  };
+
   const _brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
   const brl = (n) => _brl.format(Number(n) || 0).replace(/\u00a0/g, ' ');
 
@@ -161,6 +232,8 @@
       if (m[3] === 'v') telaDoc(c, s, dec(m[4])); else telaServico(c, s, m[3] === 'p' ? dec(m[4]) : null);
       return;
     }
+    m = h.match(/^#\/c\/([^/]+)\/conheca\/([^/]+)$/);
+    if (m && clienteSessao(dec(m[1]))) { telaConheca(clienteSessao(dec(m[1])), dec(m[2])); return; }
     m = h.match(/^#\/c\/([^/]+)$/);
     if (m && clienteSessao(dec(m[1]))) { telaCliente(dec(m[1])); return; }
     telaInicio();
@@ -264,7 +337,33 @@
       ${ofertas.length ? `<section class="pt-vit" aria-labelledby="pt-vit-t"><div class="pt-vit-h"><h2 id="pt-vit-t">Outros serviços da Souza Engenharia</h2>
           <p>A mesma equipe técnica que cuida dos documentos do seu condomínio. Escolha o serviço e peça o orçamento pelo WhatsApp.</p></div>
         <div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}">${o.tipo === 'atc' ? '<span class="pt-of-tag">Recomendado</span>' : ''}<b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
-          <a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a></div>`).join('')}</div></section>` : ''}
+          <div class="pt-of-ac"><a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a>
+          ${PAGINAS[o.tipo] ? `<a class="btn sm ghost pt-of-mais" href="#/c/${enc(c.id)}/conheca/${enc(o.tipo)}">Saiba mais${icone(IC.dir)}</a>` : ''}</div></div>`).join('')}</div></section>` : ''}
+    </div>`;
+    window.scrollTo(0, 0);
+  }
+  /** Página que explica um serviço oferecido, com o pedido de orçamento no começo e no fim. */
+  function telaConheca(c, tipo) {
+    const o = R.OFERTAS.find((x) => x.tipo === tipo), pg = PAGINAS[tipo];
+    if (!o || !pg) { location.replace('#/c/' + enc(c.id)); return; }
+    const quem = primeiroNome() ? `Sou ${primeiroNome()}, do ${c.nome}.` : `Sou do ${c.nome}.`;
+    const zap = esc(R.linkWhats(`Olá! ${quem} Vi no portal o serviço de ${o.titulo} e gostaria de uma proposta.`));
+    const duvida = esc(R.linkWhats(`Olá! ${quem} Tenho uma dúvida sobre ${o.titulo}.`));
+    const lista = (l, cls, ic) => `<ul class="${cls}">${l.map((x) => `<li>${ic ? icone(ic) : ''}<span>${esc(x)}</span></li>`).join('')}</ul>`;
+    $('#app').innerHTML = `<div class="pt pt-area pt-lp">${topo()}
+      <a class="btn ghost sm pt-voltar" href="#/c/${enc(c.id)}">${icone(IC.esq)}${esc(c.nome)}</a>
+      <header class="pt-lp-hero"><h1>${esc(o.titulo)}</h1><p>${esc(pg.lead)}</p>
+        <div class="pt-lp-cta"><a class="btn primary" href="${zap}" target="_blank" rel="noopener">${icone(IC.whats)}Quero um orçamento</a><a class="btn ghost" href="${duvida}" target="_blank" rel="noopener">Tirar uma dúvida</a></div></header>
+      <section class="card pt-lp-bl pt-lp-serve"><h2>Para que serve</h2><p>${esc(pg.serve)}</p></section>
+      <div class="pt-lp-2">
+        <section class="card pt-lp-bl"><h2>Quando fazer</h2>${lista(pg.quando, 'pt-lp-ul')}</section>
+        <section class="card pt-lp-bl"><h2>O que você recebe</h2>${lista(pg.recebe, 'pt-lp-ck', IC.check)}</section>
+      </div>
+      <section class="card pt-lp-bl"><h2>Como funciona</h2><ol class="pt-lp-passos">${pg.passos.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ol></section>
+      ${pg.base ? `<p class="pt-lp-base"><b>Base técnica:</b> ${esc(pg.base)}</p>` : ''}
+      <section class="pt-vit pt-lp-fim"><div class="pt-vit-h"><h2>Quer saber quanto fica para o ${esc(c.nome)}?</h2>
+        <p>Mande uma mensagem pelo WhatsApp e a Souza Engenharia prepara uma proposta para o seu condomínio.</p></div>
+        <a class="btn primary" href="${zap}" target="_blank" rel="noopener">${icone(IC.whats)}Quero um orçamento</a></section>
     </div>`;
     window.scrollTo(0, 0);
   }
