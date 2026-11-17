@@ -1691,10 +1691,10 @@ a.ac-renov{text-decoration:none;gap:4px}a.ac-renov .ic{width:13px;height:13px}a.
 .pt-of.destaque{border-color:var(--brand);background:linear-gradient(0deg,var(--brand-50),var(--brand-50)),var(--surface)}
 /* vitrine dos outros serviços: um bloco próprio, separado dos documentos */
 .pt-vit{margin:36px 0 28px;padding:28px 28px 26px;border-radius:16px;background:var(--brand-50);border:1px solid var(--brand-100)}
-.pt-vit-h{max-width:640px;margin-bottom:20px}
+.pt-vit-h{margin-bottom:20px}
 .pt-vit-h::before{content:'';display:block;width:32px;height:3px;border-radius:2px;background:var(--brand);margin-bottom:14px}
-.pt-vit-h h2{font-size:23px;font-weight:500;letter-spacing:-.02em;line-height:1.2;color:var(--ink);margin:0}
-.pt-vit-h p{margin:8px 0 0;font-size:14px;line-height:1.55;color:var(--ink-2)}
+.pt-vit-h h2{font-size:23px;font-weight:500;letter-spacing:-.02em;line-height:1.25;color:var(--ink);margin:0;max-width:880px;text-wrap:balance}
+.pt-vit-h p{margin:8px 0 0;font-size:14px;line-height:1.55;color:var(--ink-2);max-width:640px}
 .pt-vit .pt-ofs{margin-bottom:0}
 .pt-vit .pt-of{background:#fff;border-color:rgba(196,62,80,.12);box-shadow:0 1px 2px rgba(80,24,34,.05)}
 .pt-vit .pt-of.destaque{background:#fff;border-color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand)}

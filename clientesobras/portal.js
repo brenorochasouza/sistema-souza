@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.18`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.19`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -38,6 +38,8 @@
     cadeado: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     relogio: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   };
+  /** "o" ou "a" antes do nome do cliente: "para o Condomínio...", "para a Associação...". */
+  const art = (n) => (/(a|as|ção|ções|dade|ede)$/i.test(String(n || '').trim().split(/\s+/)[0] || '') ? 'a' : 'o');
   IC.check = '<path d="m5 12.5 4.5 4.5L19 7.5"/>';
   IC.whats = '<path d="M20.5 11.6A8.6 8.6 0 0 1 8 19.2L3.5 20.5l1.3-4.4A8.6 8.6 0 1 1 20.5 11.6z"/>';
 
@@ -323,7 +325,7 @@
     const emDia = new Set(sv.filter((s) => { const v = R.vencimento(s); return !v || R.situacaoVenc(v, hoje).estado === 'emdia'; }).map((s) => s.tipo));
     const ofertas = R.OFERTAS.filter((o) => !emDia.has(o.tipo) && !vencs.some((x) => x.s.tipo === o.tipo)).slice(0, 6);
     const obras = obrasDo(cid);
-    const quem = primeiroNome() ? `Sou ${primeiroNome()}, do ${c.nome}.` : `Sou do ${c.nome}.`;
+    const quem = primeiroNome() ? `Sou ${primeiroNome()}, d${art(c.nome)} ${c.nome}.` : `Sou d${art(c.nome)} ${c.nome}.`;
     const varios = clientesSessao().length + obrasAvulsas().length > 1;
     $('#app').innerHTML = `<div class="pt pt-area">${topo()}
       ${varios ? `<a class="btn ghost sm pt-voltar" href="#/">${icone(IC.esq)}Início</a>` : ''}
@@ -334,7 +336,7 @@
       <h2 class="pt-h2">Serviços</h2>
       ${sv.length ? `<div class="pt-svs">${sv.map((s) => cardServico(c, s)).join('')}</div>` : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
       ${obras.length ? `<h2 class="pt-h2">Obras</h2><div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}
-      ${ofertas.length ? `<section class="pt-vit" aria-labelledby="pt-vit-t"><div class="pt-vit-h"><h2 id="pt-vit-t">Outros serviços da Souza Engenharia</h2>
+      ${ofertas.length ? `<section class="pt-vit" aria-labelledby="pt-vit-t"><div class="pt-vit-h"><h2 id="pt-vit-t">Outros serviços da Souza Engenharia para ${art(c.nome)} ${esc(c.nome)}</h2>
           <p>A mesma equipe técnica que cuida dos documentos do seu condomínio. Escolha o serviço e peça o orçamento pelo WhatsApp.</p></div>
         <div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}">${o.tipo === 'atc' ? '<span class="pt-of-tag">Recomendado</span>' : ''}<b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
           <div class="pt-of-ac"><a class="btn sm ${o.tipo === 'atc' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} Tenho interesse em ${o.titulo}. Podem me enviar uma proposta?`))}" target="_blank" rel="noopener">Quero um orçamento</a>
@@ -346,7 +348,7 @@
   function telaConheca(c, tipo) {
     const o = R.OFERTAS.find((x) => x.tipo === tipo), pg = PAGINAS[tipo];
     if (!o || !pg) { location.replace('#/c/' + enc(c.id)); return; }
-    const quem = primeiroNome() ? `Sou ${primeiroNome()}, do ${c.nome}.` : `Sou do ${c.nome}.`;
+    const quem = primeiroNome() ? `Sou ${primeiroNome()}, d${art(c.nome)} ${c.nome}.` : `Sou d${art(c.nome)} ${c.nome}.`;
     const zap = esc(R.linkWhats(`Olá! ${quem} Vi no portal o serviço de ${o.titulo} e gostaria de uma proposta.`));
     const duvida = esc(R.linkWhats(`Olá! ${quem} Tenho uma dúvida sobre ${o.titulo}.`));
     const lista = (l, cls, ic) => `<ul class="${cls}">${l.map((x) => `<li>${ic ? icone(ic) : ''}<span>${esc(x)}</span></li>`).join('')}</ul>`;
@@ -361,7 +363,7 @@
       </div>
       <section class="card pt-lp-bl"><h2>Como funciona</h2><ol class="pt-lp-passos">${pg.passos.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ol></section>
       ${pg.base ? `<p class="pt-lp-base"><b>Base técnica:</b> ${esc(pg.base)}</p>` : ''}
-      <section class="pt-vit pt-lp-fim"><div class="pt-vit-h"><h2>Quer saber quanto fica para o ${esc(c.nome)}?</h2>
+      <section class="pt-vit pt-lp-fim"><div class="pt-vit-h"><h2>Quer saber quanto fica para ${art(c.nome)} ${esc(c.nome)}?</h2>
         <p>Mande uma mensagem pelo WhatsApp e a Souza Engenharia prepara uma proposta para o seu condomínio.</p></div>
         <a class="btn primary" href="${zap}" target="_blank" rel="noopener">${icone(IC.whats)}Quero um orçamento</a></section>
     </div>`;
