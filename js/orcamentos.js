@@ -2244,7 +2244,8 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       },
     };
   }
-  async function lerXlsx(arquivo) {
+  /** Linhas da primeira aba de um .xlsx: [{ r: número da linha, cel: { A: valor, B: valor, ... } }]. */
+  async function lerLinhasXlsx(arquivo) {
     const z = lerZip(await arquivo.arrayBuffer());
     const xml = (s) => new DOMParser().parseFromString(s, 'application/xml');
     const tags = (d, t) => Array.from(d.getElementsByTagName(t));
@@ -2275,8 +2276,9 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
       });
       if (Object.keys(cel).length) linhas.push({ r: +row.getAttribute('r'), cel });
     });
-    return interpretarPlanilha(linhas);
+    return linhas;
   }
+  const lerXlsx = async (arquivo) => interpretarPlanilha(await lerLinhasXlsx(arquivo));
   /** Lê o modelo de planilha da Souza: etapas (1), itens (1.1), subitens (1.1.1), subtítulos sem número e observações. */
   function interpretarPlanilha(linhas) {
     const txt = (v) => (v === null || v === undefined ? '' : String(v)).replace(/\s+/g, ' ').trim();
@@ -2616,7 +2618,7 @@ ${xf(6, 4, 1, 0, C)}</cellXfs>
      Registro no sistema
      ========================================================= */
   Sis.orcamentosConfig = { card: cardConfig };
-  Sis.orcamentos = { lista: listaOrc, calcular, calcServ, extenso, lerNumero, interpretarPlanilha, gerarXlsx, lerXlsx };
+  Sis.orcamentos = { lista: listaOrc, calcular, calcServ, extenso, lerNumero, interpretarPlanilha, gerarXlsx, lerXlsx, lerLinhasXlsx, ehServ };
   Sis.usosCli.push((id) => ({ n: store.lista(T, 'orcamento').filter((r) => r.dados && r.dados.clienteId === id).length, rot: 'orçamento', plural: 'orçamentos' }));
   Sis.modulo({
     id: 'orcamentos', nome: 'Orçamentos', desc: 'Planilhas por etapas e itens', icone: 'orcamento', sistema: true,

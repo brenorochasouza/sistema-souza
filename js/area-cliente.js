@@ -20,6 +20,7 @@
   const T = 'portal';
   const URL_CLIENTES = (window.SOUZA_CONFIG && window.SOUZA_CONFIG.portal) || 'https://portal.souzaengenharia.com/';
   const SITUACOES = [['andamento', 'Em andamento', 'atencao'], ['entregue', 'Entregue', 'ok']];
+  const TIPOS_OBRA = ['impermeabilizacao', 'fiscalizacao']; // painel da obra já marcado ao criar
   const NOME_LINK = { arquivo: 'Arquivo do Drive', doc: 'Documento Google', pasta: 'Pasta do Drive', link: 'Link' };
 
   /* ---------- dados ---------- */
@@ -240,7 +241,8 @@
           <label class="f"><span>Nome (como o cliente vê)</span><input class="inp" name="nome" value="${esc(nomeCad)}"></label>`}
           <label class="f"><span>Tipo</span><select class="inp" name="tipo">${opcoesTipo(tp ? tp.k : 'outro')}</select></label>
           <label class="f"><span>Código</span><input class="inp" name="codigo" value="SE${esc(c ? c.numero || '' : Sis.clientes.numero(cs.clienteId))}" autocapitalize="characters" spellcheck="false"></label>
-          <label class="f span2"><span>Título (como o cliente vê)</span><input class="inp" name="titulo" value="${esc(tp && tp.k !== 'outro' ? `${tp.nome} ${ano}` : `${cs.tipo} ${ano}`)}"></label></div>`,
+          <label class="f span2"><span>Título (como o cliente vê)</span><input class="inp" name="titulo" value="${esc(tp && tp.k !== 'outro' ? `${tp.nome} ${ano}` : `${cs.tipo} ${ano}`)}"></label>
+          <label class="chk span2"><input type="checkbox" name="painel" ${tp && TIPOS_OBRA.includes(tp.k) ? 'checked' : ''}> <span>É uma obra: painel com avanço, aditivos, comunicados e diário de obra</span></label></div>`,
       aoAbrir: (el) => {
         const num = $('[name=numero]', el), cod = $('[name=codigo]', el);
         if (num) num.addEventListener('input', () => { num.value = num.value.replace(/\D/g, ''); if (/^SE\d*$/i.test(cod.value)) cod.value = 'SE' + num.value; });
@@ -259,8 +261,10 @@
           if (v('numero') && Sis.clientes.numero(cs.clienteId) !== v('numero')) Sis.clientes.alterar(cs.clienteId, { numero: v('numero') });
         }
         const k = v('tipo'), md = modeloDoTipo(k), t = tipoPor(k);
-        salvarServico({ id: uid(), clienteId: cid, tipo: k, tipoNome: nomeTipo(k), codigo: v('codigo'), titulo: v('titulo') || nomeTipo(k), data: hojeISO(), situacao: 'andamento',
-          renovaAnos: t && t.anos ? String(t.anos) : '', estrutura: md ? R.copiarEstrutura(md.estrutura, { semLinks: true }) : [], contratoId: cs.id, financeiro: finDe(cs), criadoEm: new Date().toISOString() });
+        const nv = { id: uid(), clienteId: cid, tipo: k, tipoNome: nomeTipo(k), codigo: v('codigo'), titulo: v('titulo') || nomeTipo(k), data: hojeISO(), situacao: 'andamento',
+          renovaAnos: t && t.anos ? String(t.anos) : '', estrutura: md ? R.copiarEstrutura(md.estrutura, { semLinks: true }) : [], contratoId: cs.id, financeiro: finDe(cs), criadoEm: new Date().toISOString() };
+        if ($('[name=painel]', m.el).checked && Sis.areaObra) nv.painel = Sis.areaObra.painelDe(nv);
+        salvarServico(nv);
         m.fechar();
         sincronizarRenovacoes();
         ui.toast('Serviço criado na Área do cliente, em andamento.');
@@ -440,6 +444,7 @@
           if (lr && lr.situacao === 'renovado') return `<a class="chip ok ac-renov" href="#/renovacoes" title="Já renovado">${icone('repetir')}Renovado</a>`;
           const cls = `chip ${sv.estado === 'vencido' ? 'estourado' : sv.estado === 'perto' ? 'atencao' : 'neutro'}`, txt = `${sv.estado === 'vencido' ? 'Venceu em' : 'Vence em'} ${dataBR(venc)}`;
           return lr ? `<a class="${cls} ac-renov" href="#/renovacoes" title="Está nas Renovações">${icone('repetir')}${txt}</a>` : `<span class="${cls}">${txt}</span>`; })() : ''}
+          ${s.painel ? `<button class="btn sm primary" data-a="op-abrir" data-sv="${esc(s.id)}">${icone('obras')}Painel da obra</button>` : ''}
           <button class="btn icon sm" data-a="ac-sv-editar" data-id="${esc(s.id)}" aria-label="Editar serviço" title="Editar serviço">${icone('editar')}</button></div></div>
       <div class="bd">${htmlFinanceiro(s)}
         ${s.estrutura.length ? `<ul class="ac-arvore">${htmlArvore(s.estrutura, 's:' + s.id, false)}</ul>` : '<p class="small muted">Nenhuma pasta ou documento ainda.</p>'}
@@ -453,14 +458,15 @@
     const sv = servicosDe(c.id);
     const peso = (o) => (o.areaCliente === c.id ? 0 : o.areaCliente ? 3 : o.situacao === 'concluida' ? 2 : 1);
     const obs = obrasRdo().sort((x, y) => peso(x) - peso(y));
+    const noPainel = new Map(sv.filter((x) => x.painel && x.painel.rdoObraId).map((x) => [x.painel.rdoObraId, x]));
     el.innerHTML = `<div class="ob-topo"><a class="btn icon" href="#/area" aria-label="Voltar">${icone('esq')}</a>
         <div class="tit"><b>${esc(rotulo(c))}</b><span>${sv.length} ${sv.length === 1 ? 'serviço' : 'serviços'}${c.carteiraId ? ' · ' + esc(Sis.clientes.nome(c.carteiraId) || 'cliente da carteira') : ''}${c.obs ? ' · ' + esc(c.obs) : ''}</span></div>
         <div class="actions"><button class="btn" data-a="ac-cli-editar" data-id="${esc(c.id)}">${icone('editar')}<span>Editar</span></button><button class="btn primary" data-a="ac-sv-novo" data-c="${esc(c.id)}">${icone('mais')}<span>Novo serviço</span></button></div></div>
       <p class="small muted ac-dica">${icone('info')}<span>Cada link precisa estar compartilhado no Drive como <b>Qualquer pessoa com o link: Leitor</b>. Compartilhe só o arquivo ou a pasta que vai para o cliente, nunca a pasta numerada inteira.</span></p>
       ${sv.length ? sv.map(htmlServico).join('') : '<div class="card"><div class="empty"><b>Nenhum serviço ainda</b>Crie o serviço (AVCB, inspeção, laudo...): a organização do modelo já vem pronta.</div></div>'}
       <section class="card"><div class="hd"><div><h3>Obras (Diário de obra)</h3><p>As obras marcadas aparecem para o cliente com os diários aprovados.</p></div></div>
-        <div class="bd">${obs.length ? `<div class="ac-obras">${obs.map((o) => `<label class="chk"><input type="checkbox" data-ac-obra="${esc(o.id)}" ${o.areaCliente === c.id ? 'checked' : ''} ${o.areaCliente && o.areaCliente !== c.id ? 'disabled' : ''}>
-          <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.areaCliente && o.areaCliente !== c.id ? ` <small class="muted">(ligada a ${esc((cliente(o.areaCliente) || { nome: 'outro cliente' }).nome)})</small>` : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra no Diário de obra.</p>'}</div></section>
+        <div class="bd">${obs.length ? `<div class="ac-obras">${obs.map((o) => `<label class="chk"><input type="checkbox" data-ac-obra="${esc(o.id)}" ${o.areaCliente === c.id ? 'checked' : ''} ${(o.areaCliente && o.areaCliente !== c.id) || noPainel.has(o.id) ? 'disabled' : ''}>
+          <span>${esc(o.nome)}${o.contrato ? ` <small class="muted">${esc(o.contrato)}</small>` : ''}${o.areaCliente && o.areaCliente !== c.id ? ` <small class="muted">(ligada a ${esc((cliente(o.areaCliente) || { nome: 'outro cliente' }).nome)})</small>` : ''}${noPainel.has(o.id) ? ` <small class="muted">(no painel de ${esc(noPainel.get(o.id).titulo || 'uma obra')})</small>` : ''}</span></label>`).join('')}</div>` : '<p class="small muted">Nenhuma obra no Diário de obra.</p>'}</div></section>
       <section class="card"><div class="hd"><div><h3>Acesso do cliente</h3><p>Um acesso do condomínio, não de uma pessoa: qualquer um da gestão entra com ele em ${esc(URL_CLIENTES.replace(/^https?:\/\//, '').replace(/\/$/, ''))}.</p></div></div>
         <div class="bd" data-q="quem"><p class="small muted">Carregando…</p></div></section>
       <div class="ac-pe"><button class="btn danger" data-a="ac-cli-x" data-id="${esc(c.id)}">${icone('lixo')}Excluir cliente</button></div>`;
@@ -603,15 +609,19 @@
         <label class="f"><span>Situação</span><select class="inp" name="situacao">${SITUACOES.map(([k, n]) => `<option value="${k}" ${s.situacao === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
         <label class="f"><span>Renova a cada (anos)</span><input class="inp" name="renovaAnos" inputmode="numeric" value="${esc(s.renovaAnos || '')}" placeholder="Em branco: não vence"></label>
         <p class="small muted" data-q="venc" style="align-self:end;margin:0 0 10px"></p>
-        ${novo ? `<label class="f span2"><span>Organização</span><select class="inp" name="modelo"><option value="">Vazia (organizo do meu jeito)</option>${ms.map((m) => `<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join('')}</select></label>` : ''}</div>`,
+        ${novo ? `<label class="f span2"><span>Organização</span><select class="inp" name="modelo"><option value="">Vazia (organizo do meu jeito)</option>${ms.map((m) => `<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join('')}</select></label>` : ''}
+        <label class="chk span2"><input type="checkbox" name="painel" ${s.painel ? 'checked disabled' : ''}> <span>É uma obra: painel com avanço físico e financeiro, aditivos, comunicados e diário de obra para o cliente${s.painel ? ' (já tem)' : ''}</span></label></div>`,
       aoAbrir: (el) => {
         const tipo = $('[name=tipo]', el), tit = $('[name=titulo]', el), anos = $('[name=renovaAnos]', el), data = $('[name=data]', el), venc = $('[data-q=venc]', el), mod = $('[name=modelo]', el), sit = $('[name=situacao]', el);
-        let mexeuTit = !novo, mexeuAnos = !novo, mexeuMod = false;
+        let mexeuTit = !novo, mexeuAnos = !novo, mexeuMod = false, mexeuPainel = !novo;
+        const pn = $('[name=painel]', el);
+        pn.addEventListener('change', () => { mexeuPainel = true; });
         if (mod) mod.addEventListener('change', () => { mexeuMod = true; });
         const sugerir = () => {
           if (!mexeuTit) tit.value = `${nomeTipo(tipo.value)}${data.value ? ' ' + data.value.slice(0, 4) : ''}`;
           if (!mexeuAnos) { const t = tipoPor(tipo.value); anos.value = t && t.anos ? t.anos : ''; }
           if (mod && !mexeuMod) { const m = modeloDoTipo(tipo.value); mod.value = m ? m.id : ''; }
+          if (!mexeuPainel && !pn.disabled) pn.checked = TIPOS_OBRA.includes(tipo.value);
           const v = R.vencimento({ data: data.value, renovaAnos: anos.value });
           venc.textContent = v ? `Vence em ${dataBR(v)}. ${sit.value === 'entregue' ? 'Entra nas Renovações.' : 'Entra nas Renovações quando estiver Entregue.'}` : '';
         };
@@ -639,8 +649,11 @@
           const v = (n) => ($(`[name=${n}]`, m.el) ? $(`[name=${n}]`, m.el).value.trim() : '');
           const d = Object.assign({}, s, { id: s.id || uid(), clienteId: cid, tipo: v('tipo'), tipoNome: nomeTipo(v('tipo')), codigo: v('codigo'), titulo: v('titulo') || nomeTipo(v('tipo')), data: v('data'), situacao: v('situacao'), renovaAnos: v('renovaAnos').replace(/[^\d]/g, '') });
           if (novo) { const md = modelo(v('modelo')); d.estrutura = md ? R.copiarEstrutura(md.estrutura, { semLinks: true }) : []; d.criadoEm = new Date().toISOString(); }
+          const comPainel = !d.painel && $('[name=painel]', m.el).checked;
+          if (comPainel) d.painel = Sis.areaObra.painelDe(d);
           salvarServico(d);
           m.fechar();
+          if (comPainel) { location.hash = `#/area/${cid}/obra/${d.id}`; return; }
           const rs = sincronizarRenovacoes();
           Sis.desenhar(true);
           if (rs && rs.criados.length) ui.toast(`Entrou nas Renovações: renovação em ${dataBR(rs.criados[0].renovacao)}.`);
@@ -692,6 +705,7 @@
     if (B.perfil() !== 'master') { el.innerHTML = '<div class="card"><div class="empty"><b>Só o acesso master gerencia a área do cliente.</b></div></div>'; return; }
     sincronizarFinanceiro(); sincronizarRenovacoes(); sincronizarNumeros();
     if (partes[0] === 'modelos') { if (partes[1]) telaModelo(el, partes[1]); else telaModelos(el); return; }
+    if (partes[0] && partes[1] === 'obra' && Sis.areaObra) { Sis.areaObra.tela(el, partes[0], partes[2]); return; }
     if (partes[0]) telaCliente(el, partes[0]); else telaLista(el);
   }
   B.store.ouvir((origem) => {
@@ -700,7 +714,7 @@
     if (Sis.rota().mod === 'area' && !document.querySelector('.modal')) Sis.desenhar(true);
   });
   if (Sis.store && Sis.store.ouvir) Sis.store.ouvir(() => agendarFin());
-  Sis.areaCliente = { sincronizarFinanceiro, sincronizarRenovacoes, servicosArea, oferecerDoContrato };
+  Sis.areaCliente = { sincronizarFinanceiro, sincronizarRenovacoes, servicosArea, oferecerDoContrato, servico, salvarServico, cliente, obrasRdo, htmlFinanceiro, htmlArvore, nomeTipo };
   Sis.modulo({
     id: 'area', nome: 'Área do cliente', desc: 'Documentos e serviços dos clientes', icone: 'pasta', sistema: true,
     render,

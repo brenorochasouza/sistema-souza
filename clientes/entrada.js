@@ -5,7 +5,7 @@
    atualização vale para as duas entradas.
    ========================================================= */
 (function () {
-  var V = '1.4.19';
+  var V = '1.4.20';
   var RAIZ = new URL('..', document.currentScript.src).href;
   window.SOUZA_RAIZ = RAIZ;
   window.PORTAL_SESSAO = true;
@@ -14,7 +14,7 @@
   var css = document.createElement('link');
   css.rel = 'stylesheet'; css.href = RAIZ + 'css/estilo.css?v=' + V;
   document.head.appendChild(css);
-  var js = ['js/config.js', 'js/nucleo.js', 'js/rdo-relatorio.js', 'js/rdo-dados.js', 'js/rdo.js', 'clientesobras/portal.js', 'rdo/app.js'];
+  var js = ['js/config.js', 'js/nucleo.js', 'js/rdo-relatorio.js', 'js/obra-painel.js', 'js/rdo-dados.js', 'js/rdo.js', 'clientesobras/portal.js', 'rdo/app.js'];
   function falhou() {
     var a = document.getElementById('app');
     if (a) a.innerHTML = '<p style="padding:48px 16px;text-align:center;font-family:sans-serif;color:#555">Não foi possível carregar a Área do cliente. Confira a internet e tente de novo.</p>';

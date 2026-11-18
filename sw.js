@@ -1,13 +1,13 @@
 /* Guarda uma cópia do sistema no aparelho para abrir sem internet.
    Com internet, sempre busca a versão mais nova e atualiza a cópia. */
-const CACHE = 'souza-1.4.19';
+const CACHE = 'souza-1.4.20';
 const ARQUIVOS = [
   './', 'index.html', 'manifest.webmanifest',
-  'css/estilo.css?v=1.4.19',
-  'js/config.js?v=1.4.19', 'js/nucleo.js?v=1.4.19', 'js/inicio.js?v=1.4.19', 'js/agenda.js?v=1.4.19',
-  'js/clientes.js?v=1.4.19', 'js/orcamentos.js?v=1.4.19', 'js/renovacoes.js?v=1.4.19', 'js/obras.js?v=1.4.19', 'js/rdo-relatorio.js?v=1.4.19', 'js/rdo-dados.js?v=1.4.19', 'js/rdo.js?v=1.4.19', 'js/area-cliente.js?v=1.4.19', 'js/acessos.js?v=1.4.19', 'js/configuracoes.js?v=1.4.19',
-  'rdo/', 'rdo/app.js?v=1.4.19', 'rdo/manifest.webmanifest', 'clientesobras/portal.js?v=1.4.19',
-  'img/logo.png?v=1.4.19', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
+  'css/estilo.css?v=1.4.20',
+  'js/config.js?v=1.4.20', 'js/nucleo.js?v=1.4.20', 'js/inicio.js?v=1.4.20', 'js/agenda.js?v=1.4.20',
+  'js/clientes.js?v=1.4.20', 'js/orcamentos.js?v=1.4.20', 'js/renovacoes.js?v=1.4.20', 'js/obras.js?v=1.4.20', 'js/rdo-relatorio.js?v=1.4.20', 'js/obra-painel.js?v=1.4.20', 'js/rdo-dados.js?v=1.4.20', 'js/rdo.js?v=1.4.20', 'js/area-cliente.js?v=1.4.20', 'js/area-obra.js?v=1.4.20', 'js/acessos.js?v=1.4.20', 'js/configuracoes.js?v=1.4.20',
+  'rdo/', 'rdo/app.js?v=1.4.20', 'rdo/manifest.webmanifest', 'clientesobras/portal.js?v=1.4.20',
+  'img/logo.png?v=1.4.20', 'img/favicon.png', 'img/icone-192.png', 'img/icone-512.png', 'img/apple-touch-icon.png',
   'fonts/instrument-sans-latin-400-normal.woff2', 'fonts/instrument-sans-latin-500-normal.woff2', 'fonts/instrument-sans-latin-600-normal.woff2',
   'fonts/instrument-sans-latin-ext-400-normal.woff2', 'fonts/instrument-sans-latin-ext-500-normal.woff2', 'fonts/instrument-sans-latin-ext-600-normal.woff2',
 ];

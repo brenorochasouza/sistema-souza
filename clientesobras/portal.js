@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.19`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.20`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -41,6 +41,9 @@
   /** "o" ou "a" antes do nome do cliente: "para o Condomínio...", "para a Associação...". */
   const art = (n) => (/(a|as|ção|ções|dade|ede)$/i.test(String(n || '').trim().split(/\s+/)[0] || '') ? 'a' : 'o');
   IC.check = '<path d="m5 12.5 4.5 4.5L19 7.5"/>';
+  IC.aviso = '<path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1z"/><path d="M16 9a3.5 3.5 0 0 1 0 6M18.5 6.5a7 7 0 0 1 0 11"/>';
+  const OP = () => window.ObraPainel;
+  const temPainel = (s) => !!(s && s.painel && OP());
   IC.whats = '<path d="M20.5 11.6A8.6 8.6 0 0 1 8 19.2L3.5 20.5l1.3-4.4A8.6 8.6 0 1 1 20.5 11.6z"/>';
 
   /** Página explicativa de cada serviço oferecido (o "Saiba mais" da vitrine). */
@@ -212,7 +215,9 @@
   }
   async function rota() {
     const h = location.hash;
+    est.anterior = est.atual; est.atual = h;
     let m = h.match(/^#\/o\/([^/]+)(?:\/d\/(.+))?$/);
+    if (m && !m[2]) { const pn = painelDaObra(dec(m[1])); if (pn) { location.replace(`${baseSv(pn.c, pn.s)}/a/diarios`); return; } }
     if (m) {
       const id = dec(m[1]);
       if (!est.dados || est.dados.obra.id !== id) {
@@ -227,11 +232,15 @@
     est.dados = null; est.aberto = null;
     m = h.match(/^#\/c\/([^/]+)\/doc\/([^/]+)\/([^/]+)$/); // endereço antigo de documento
     if (m) { location.replace(`#/c/${m[1]}/s/${m[2]}/v/${m[3]}`); return; }
-    m = h.match(/^#\/c\/([^/]+)\/s\/([^/]+)(?:\/(p|v)\/([^/]+))?$/);
+    m = h.match(/^#\/c\/([^/]+)\/s\/([^/]+)(?:\/(p|v|a|com)\/([^/]+))?$/);
     if (m) {
       const c = clienteSessao(dec(m[1])), s = c && (c.servicos || []).find((x) => x.id === dec(m[2]));
       if (!s) { location.replace(c ? '#/c/' + m[1] : '#/'); return; }
-      if (m[3] === 'v') telaDoc(c, s, dec(m[4])); else telaServico(c, s, m[3] === 'p' ? dec(m[4]) : null);
+      if (m[3] === 'v') telaDoc(c, s, dec(m[4]));
+      else if (m[3] === 'com' && temPainel(s)) telaComunicado(c, s, dec(m[4]));
+      else if (m[3] === 'p') telaServico(c, s, dec(m[4]));
+      else if (temPainel(s)) telaObra(c, s, m[3] === 'a' ? dec(m[4]) : 'avanco');
+      else telaServico(c, s, null);
       return;
     }
     m = h.match(/^#\/c\/([^/]+)\/conheca\/([^/]+)$/);
@@ -240,8 +249,15 @@
     if (m && clienteSessao(dec(m[1]))) { telaCliente(dec(m[1])); return; }
     telaInicio();
   }
-  /** Para onde volta quem está numa obra: o cliente dela, a lista ou nada. */
+  /** Serviço com painel que tem esta obra do diário ligada. */
+  function painelDaObra(oid) {
+    for (const c of clientesSessao()) for (const s of c.servicos || []) if (temPainel(s) && s.painel.rdoObraId === oid) return { c, s };
+    return null;
+  }
+  /** Para onde volta quem está numa obra: o painel dela, o cliente, a lista ou nada. */
   function voltarDaObra(o) {
+    const pn = o && painelDaObra(o.id);
+    if (pn) return { href: `${baseSv(pn.c, pn.s)}/a/diarios`, rot: nomeSv(pn.s) };
     if (o && o.cliente && clienteSessao(o.cliente)) return { href: '#/c/' + enc(o.cliente), rot: clienteSessao(o.cliente).nome };
     if (clientesSessao().length + obrasAvulsas().length > 1) return { href: '#/', rot: 'Início' };
     return null;
@@ -324,7 +340,9 @@
       .sort((a, b) => a.v.localeCompare(b.v));
     const emDia = new Set(sv.filter((s) => { const v = R.vencimento(s); return !v || R.situacaoVenc(v, hoje).estado === 'emdia'; }).map((s) => s.tipo));
     const ofertas = R.OFERTAS.filter((o) => !emDia.has(o.tipo) && !vencs.some((x) => x.s.tipo === o.tipo)).slice(0, 6);
-    const obras = obrasDo(cid);
+    const paineis = sv.filter(temPainel);
+    const ligadas = new Set(paineis.map((s) => s.painel.rdoObraId).filter(Boolean));
+    const obras = obrasDo(cid).filter((o) => !ligadas.has(o.id));
     const quem = primeiroNome() ? `Sou ${primeiroNome()}, d${art(c.nome)} ${c.nome}.` : `Sou d${art(c.nome)} ${c.nome}.`;
     const varios = clientesSessao().length + obrasAvulsas().length > 1;
     $('#app').innerHTML = `<div class="pt pt-area">${topo()}
@@ -333,9 +351,9 @@
       ${vencs.length ? `<section class="card pt-venc"><div class="hd"><div><h3>Vencimentos</h3><p>Quando cada laudo precisa ser renovado.</p></div></div><div class="bd"><ul>${vencs.map((x) => `<li class="${x.renovando ? 'renovando' : x.estado}">
           <span class="pt-venc-t"><b>${esc(nomeSv(x.s))}</b><small>${x.estado === 'vencido' ? `Venceu em ${dataBR(x.v)}` : `Vence em ${dataBR(x.v)}`}${x.estado === 'perto' && !x.renovando ? ` · faltam ${x.dias} ${x.dias === 1 ? 'dia' : 'dias'}` : ''}</small></span>
           ${x.renovando ? '<span class="chip info">Renovação em andamento</span>' : x.estado === 'emdia' ? '<span class="chip ok">Em dia</span>' : `<a class="btn sm ${x.estado === 'vencido' ? 'primary' : ''}" href="${esc(R.linkWhats(`Olá! ${quem} O ${nomeSv(x.s)}${x.s.codigo ? ' (' + x.s.codigo + ')' : ''} ${x.estado === 'vencido' ? 'venceu' : 'vence'} em ${dataBR(x.v)}. Gostaria de agendar a renovação.`))}" target="_blank" rel="noopener">Pedir renovação</a>`}</li>`).join('')}</ul></div></section>` : ''}
-      <h2 class="pt-h2">Serviços</h2>
-      ${sv.length ? `<div class="pt-svs">${sv.map((s) => cardServico(c, s)).join('')}</div>` : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}
-      ${obras.length ? `<h2 class="pt-h2">Obras</h2><div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}
+      ${paineis.length || obras.length ? `<h2 class="pt-h2">Obras</h2>${paineis.length ? `<div class="po-cards">${paineis.map((s) => cardPainel(c, s)).join('')}</div>` : ''}${obras.length ? `<div class="r-obras">${obras.map(cardObra).join('')}</div>` : ''}` : ''}
+      ${sv.length > paineis.length || !paineis.length ? `<h2 class="pt-h2">Serviços</h2>
+      ${sv.length > paineis.length ? `<div class="pt-svs">${sv.filter((s) => !temPainel(s)).map((s) => cardServico(c, s)).join('')}</div>` : '<div class="card"><div class="empty">Nenhum serviço liberado ainda.</div></div>'}` : ''}
       ${ofertas.length ? `<section class="pt-vit" aria-labelledby="pt-vit-t"><div class="pt-vit-h"><h2 id="pt-vit-t">Outros serviços da Souza Engenharia para ${art(c.nome)} ${esc(c.nome)}</h2>
           <p>A mesma equipe técnica que cuida dos documentos do seu condomínio. Escolha o serviço e peça o orçamento pelo WhatsApp.</p></div>
         <div class="pt-ofs">${ofertas.map((o) => `<div class="card pt-of ${o.tipo === 'atc' ? 'destaque' : ''}">${o.tipo === 'atc' ? '<span class="pt-of-tag">Recomendado</span>' : ''}<b>${esc(o.titulo)}</b><p>${esc(o.texto)}</p>
@@ -369,6 +387,102 @@
     </div>`;
     window.scrollTo(0, 0);
   }
+  /* ----- obra com painel: avanço, financeiro, comunicados, diários e documentos ----- */
+  const barraP = (v, cor) => `<div class="op-bar"><i style="width:${Math.max(0, Math.min(100, v || 0)).toFixed(1)}%;background:${cor}"></i></div>`;
+  function cardPainel(c, s) {
+    const P = OP(), p = s.painel, h = hojeISO(), fis = P.fisico(p, h), fin = P.financeiro(p, s.financeiro, h);
+    const cs = (p.comunicados || []).slice().sort(P.porNumero), ult = cs[cs.length - 1];
+    return `<a class="card po-card" href="${baseSv(c, s)}"><span class="po-card-t"><b>${esc(nomeSv(s))}</b><small>${esc([s.codigo, s.situacao === 'entregue' ? 'Concluída' : 'Em andamento'].filter(Boolean).join(' · '))}</small></span>
+      ${P.tem(p) ? `<span class="po-card-k"><span><small>Físico</small><b>${P.pct(fis, 0)}</b>${barraP(fis, P.COR_FIS)}</span><span><small>Financeiro</small><b>${fin.ligado ? P.pct(fin.pct, 0) : '-'}</b>${barraP(fin.pct, P.COR_FIN)}</span></span>` : ''}
+      ${ult ? `<span class="po-card-c">${icone(IC.aviso)}<span>Último comunicado: nº ${P.n3(ult.numero)}, ${esc(ult.titulo)}</span></span>` : ''}${icone(IC.dir)}</a>`;
+  }
+  const ABAS = [['avanco', 'Avanço'], ['financeiro', 'Financeiro'], ['comunicados', 'Comunicados'], ['diarios', 'Diários de obra'], ['documentos', 'Documentos']];
+  function telaObra(c, s, aba) {
+    const P = OP(), p = s.painel, h = hojeISO(), base = baseSv(c, s);
+    const temP = P.tem(p), es = temP ? P.etapas(p, h) : [], ps = P.pctEtapas(p, h), fis = P.fisico(p, h), fin = P.financeiro(p, s.financeiro, h), pz = P.prazo(p, h), ult = P.medicaoAte(p, null);
+    const coms = (p.comunicados || []).slice().sort(P.porNumero).reverse(), ads = (p.aditivos || []).slice().sort(P.porNumero);
+    const abas = ABAS.filter(([k]) => k !== 'diarios' || p.rdoObraId);
+    if (!abas.some(([k]) => k === aba)) aba = 'avanco';
+    const n = { comunicados: coms.length };
+    let corpo = '';
+    if (aba === 'avanco') {
+      corpo = temP ? `<section class="card"><div class="hd"><div><h3>Evolução por quinzena</h3><p>${ult ? `Avanço físico atualizado em ${dataBR(ult.data)}.` : 'Ainda sem atualização do avanço.'} O financeiro é o que já foi pago do contrato.</p></div></div>
+          <div class="bd">${P.htmlGrafico(P.serie(p, s.financeiro, { ref: h, concluida: s.situacao === 'entregue' }))}</div></section>
+        <section class="card"><div class="hd"><div><h3>Avanço por etapa</h3><p>O peso de cada etapa é a parte dela no valor do contrato.</p></div></div>
+          <div class="bd flush tblwrap"><table class="tbl op-tbl"><thead><tr><th>Nº</th><th>Etapa</th><th class="num">Peso</th><th>Executado</th></tr></thead><tbody>
+          ${es.map((e) => `<tr class="${e.valor <= 0 ? 'off' : ''}"><td>${esc(e.num)}</td><td>${esc(e.desc)}${e.aditivo ? ` <span class="chip neutro">aditivo nº ${esc(e.aditivo)}</span>` : ''}${e.valor <= 0 ? ' <span class="chip neutro">suprimida</span>' : ''}</td><td class="num">${P.pct(e.peso * 100)}</td><td class="op-ex"><span>${P.pct(ps.get(e.id), 0)}</span>${barraP(ps.get(e.id), P.COR_FIS)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td></td><td>Obra</td><td class="num">100%</td><td class="op-ex"><span>${P.pct(fis)}</span></td></tr></tfoot></table></div></section>`
+        : '<div class="card"><div class="empty">O avanço da obra aparece aqui assim que a Souza Engenharia lançar a planilha do contrato.</div></div>';
+    } else if (aba === 'financeiro') {
+      const parcelas = (s.financeiro && s.financeiro.parcelas) || [];
+      const estP = (x) => (x.pago ? ['ok', 'Paga', x.dataPago ? `Paga em ${dataBR(x.dataPago)}` : 'Paga'] : x.venc && x.venc < h ? ['estourado', 'Em aberto', `Venceu em ${dataBR(x.venc)}`] : ['neutro', 'A vencer', x.venc ? `Vence em ${dataBR(x.venc)}` : 'A vencer']);
+      const dc = s.contratoUrl ? R.drive(s.contratoUrl) || { tipo: 'link', abrir: s.contratoUrl } : null;
+      corpo = `<section class="card"><div class="hd"><div><h3>Contrato</h3><p>${ads.length ? `Valor original e ${ads.length} ${ads.length === 1 ? 'aditivo' : 'aditivos'}.` : 'Valor do contrato, sem aditivos.'}</p></div>
+          ${dc ? `<a class="btn sm" href="${dc.tipo === 'link' ? esc(dc.abrir) : base + '/v/contrato'}" ${dc.tipo === 'link' ? 'target="_blank" rel="noopener"' : ''}>${icone(IC.nota)}Ver o contrato</a>` : ''}</div>
+        <div class="bd"><ul class="po-ct">${temP ? `<li><span>Valor original</span><b>${P.brl(P.totalOriginal(p))}</b></li>${ads.map((a) => { const v = (a.linhas || []).reduce((t, x) => t + (Number(x.valor) || 0), 0); return `<li><span>Aditivo nº ${esc(a.numero)} de ${dataBR(a.data)}<small>${esc(a.desc || '')}${a.prazoDias ? ` · prazo ${a.prazoDias > 0 ? '+' : ''}${a.prazoDias} dias` : ''}</small></span><b class="${v < 0 ? 'neg' : ''}">${v === 0 ? '-' : (v > 0 ? '+' : '') + P.brl(v)}</b></li>`; }).join('')}` : ''}
+          <li class="tot"><span>Valor atual do contrato</span><b>${P.brl(fin.total)}</b></li></ul></div></section>
+        ${fin.ligado ? `<section class="card"><div class="hd"><div><h3>Pagamentos</h3><p>O que já foi pago e o que falta.</p></div></div><div class="bd">
+          <div class="pt-ct-k"><div><span>Pago</span><b class="pt-ok">${P.brl(fin.pago)}</b></div><div><span>A pagar</span><b>${P.brl(fin.aPagar)}</b></div><div><span>Avanço financeiro</span><b>${P.pct(fin.pct)}</b></div></div>
+          ${barraP(fin.pct, P.COR_FIN)}
+          ${parcelas.length ? `<ul class="pt-pc">${parcelas.map((x, i) => { const [cls, rot, txt] = estP(x); return `<li><span class="pt-pc-t"><b>${esc(x.desc || `Parcela ${i + 1}`)}</b><small>${esc(txt)}</small></span><span class="pt-pc-v">${P.brl(x.valor)}</span><span class="chip ${cls}">${rot}</span></li>`; }).join('')}</ul>` : ''}</div></section>` : ''}`;
+    } else if (aba === 'comunicados') {
+      corpo = coms.length ? `<div class="po-coms">${coms.map((x) => `<a class="card po-com" href="${base}/com/${enc(x.id)}"><span class="po-com-n">nº ${P.n3(x.numero)}</span><span class="po-com-t"><b>${esc(x.titulo)}</b><small>${dataBR(x.data)}</small><span>${esc(String(x.texto || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').slice(0, 150))}${String(x.texto || '').length > 150 ? '…' : ''}</span></span>${icone(IC.dir)}</a>`).join('')}</div>`
+        : '<div class="card"><div class="empty">Nenhum comunicado ainda. Quando a Souza Engenharia publicar um, ele aparece aqui.</div></div>';
+    } else if (aba === 'diarios') {
+      corpo = '<section class="card"><div class="bd" data-q="diarios"><p class="small muted">Carregando os diários…</p></div></section>';
+    } else {
+      const docs = htmlNos(R.estruturaDe(s), base);
+      corpo = `<section class="card pt-sv-docs"><div class="bd">${docs || '<p class="small muted">Os documentos da obra aparecem aqui assim que forem liberados.</p>'}</div></section>`;
+    }
+    $('#app').innerHTML = `<div class="pt pt-area po">${topo()}
+      <div class="ob-topo"><a class="btn icon" href="#/c/${enc(c.id)}" aria-label="Voltar">${icone(IC.esq)}</a>
+        <div class="tit"><b>${esc(nomeSv(s))}</b><span>${esc([s.codigo, c.nome].filter(Boolean).join(' · '))}</span></div>
+        <div class="actions"><span class="chip ${s.situacao === 'entregue' ? 'ok' : 'atencao'}">${s.situacao === 'entregue' ? 'Concluída' : 'Em andamento'}</span>${temP ? `<button class="btn" data-p="op-rel">${icone(IC.imprimir)}<span>Imprimir</span></button>` : ''}</div></div>
+      ${temP ? `<div class="op-kpis">
+        <div><span>Avanço físico</span><b>${P.pct(fis)}</b>${barraP(fis, P.COR_FIS)}<small>${ult ? `Atualizado em ${dataBR(ult.data)}` : 'Ainda sem atualização'}</small></div>
+        <div><span>Avanço financeiro</span><b>${fin.ligado ? P.pct(fin.pct) : '-'}</b>${barraP(fin.pct, P.COR_FIN)}<small>${fin.ligado ? `${P.brl(fin.pago)} pagos` : ' '}</small></div>
+        <div><span>Valor do contrato</span><b>${P.brl(fin.total)}</b><small>${ads.length ? `${ads.length} ${ads.length === 1 ? 'aditivo' : 'aditivos'}` : 'Sem aditivos'}</small></div>
+        <div><span>Prazo</span><b>${pz.decorrido !== null && pz.totalDias ? `Dia ${pz.decorrido} de ${pz.totalDias}` : '-'}</b><small>${pz.termino ? `Término previsto ${dataBR(pz.termino)}` : ' '}</small></div></div>` : ''}
+      ${coms.length && aba !== 'comunicados' ? `<a class="po-ult" href="${base}/com/${enc(coms[0].id)}">${icone(IC.aviso)}<span><small>Último comunicado · ${dataBR(coms[0].data)}</small><b>nº ${P.n3(coms[0].numero)}: ${esc(coms[0].titulo)}</b></span><span class="po-ult-l">Ler</span></a>` : ''}
+      <nav class="ob-abas po-abas">${abas.map(([k, r]) => `<a href="${base}/a/${k}" class="${aba === k ? 'ativo' : ''}">${r}${n[k] ? ` <span class="po-n">${n[k]}</span>` : ''}</a>`).join('')}</nav>
+      ${corpo}
+    </div>`;
+    P.ligar($('#app'));
+    if (aba === 'diarios') pintarDiarios(p.rdoObraId);
+    // trocar de aba mantém a rolagem; chegar de outra tela começa do topo
+    const ant = est.anterior || '';
+    if (!(ant === base || ant.startsWith(base + '/a/'))) window.scrollTo(0, 0);
+  }
+  async function pintarDiarios(oid) {
+    const alvo = () => $('[data-q="diarios"]');
+    try {
+      if (!est.dados || est.dados.obra.id !== oid) est.dados = await rpc('rdo_cliente_obra', { p_obra: oid });
+      if (!alvo()) return;
+      const ds = (est.dados.diarios || []).slice().sort(R.ordemDiario).reverse();
+      alvo().innerHTML = ds.length ? `<ul class="pt-docs po-ds">${ds.map((d) => `<li><a href="#/o/${enc(oid)}/d/${enc(d.id)}">${icone(IC.nota)}<span><b>RDO nº ${esc(d.numero)}</b><small>${R.diaSemana(d.data)}, ${dataBR(d.data)}${(d.fotos || []).length ? ` · ${d.fotos.length} ${d.fotos.length === 1 ? 'foto' : 'fotos'}` : ''}</small></span>${icone(IC.dir)}</a></li>`).join('')}</ul>`
+        : '<p class="small muted">Nenhum diário aprovado ainda.</p>';
+    } catch (e) { if (alvo()) alvo().innerHTML = `<p class="small muted">Não foi possível carregar os diários agora: ${esc(e.message)}</p>`; }
+  }
+  function telaComunicado(c, s, id) {
+    const P = OP(), cs = (s.painel.comunicados || []).slice().sort(P.porNumero), i = cs.findIndex((x) => x.id === id), base = baseSv(c, s);
+    if (i < 0) { location.replace(`${base}/a/comunicados`); return; }
+    const x = cs[i];
+    $('#app').innerHTML = `<div class="pt pt-area po">${topo()}
+      <div class="ob-topo"><a class="btn icon" href="${base}/a/comunicados" aria-label="Voltar">${icone(IC.esq)}</a>
+        <div class="tit"><b>${P.tituloCom(x)}</b><span>${dataBR(x.data)} · ${esc(nomeSv(s))}</span></div>
+        <div class="actions"><button class="btn primary" data-p="op-com-imp" data-id="${esc(x.id)}">${icone(IC.imprimir)}<span>Imprimir</span></button></div></div>
+      <div class="oc-papel">${P.htmlComunicado(x, { cliente: c.nome, obra: nomeSv(s), codigo: s.codigo, logo: LOGO })}</div>
+      <div class="pt-nav">${i > 0 ? `<a class="btn" href="${base}/com/${enc(cs[i - 1].id)}">${icone(IC.esq)}nº ${P.n3(cs[i - 1].numero)}</a>` : '<span></span>'}${i < cs.length - 1 ? `<a class="btn" href="${base}/com/${enc(cs[i + 1].id)}">nº ${P.n3(cs[i + 1].numero)} ›</a>` : ''}</div>
+    </div>`;
+    window.scrollTo(0, 0);
+  }
+  /** Serviço e cliente da página aberta (para imprimir). */
+  function abertoAgora() {
+    const m = location.hash.match(/^#\/c\/([^/]+)\/s\/([^/]+)/);
+    const c = m && clienteSessao(dec(m[1])), s = c && (c.servicos || []).find((x) => x.id === dec(m[2]));
+    return s ? { c, s } : null;
+  }
+
   /** Página do serviço (pid vazio) ou de uma pasta dele. */
   function telaServico(c, s, pid) {
     const raiz = R.estruturaDe(s), base = baseSv(c, s);
@@ -380,7 +494,7 @@
       // pasta com o link do Drive e mais coisas dentro: a pasta do Drive vem primeiro
       if (a.no.url) lista = [{ id: a.no.id, tipo: 'doc', nome: 'Arquivos da pasta', url: a.no.url }].concat(lista);
       sub = caminho(s, a.pais);
-      volta = a.pais.length ? `${base}/p/${enc(a.pais[a.pais.length - 1].id)}` : base;
+      volta = a.pais.length ? `${base}/p/${enc(a.pais[a.pais.length - 1].id)}` : temPainel(s) ? `${base}/a/documentos` : base;
     }
     const docs = htmlNos(lista, base);
     $('#app').innerHTML = `<div class="pt pt-area">${topo()}
@@ -406,6 +520,7 @@
       }
     }
     if (!url) { location.replace(base); return; }
+    if (volta === base && temPainel(s)) volta = `${base}/a/documentos`;
     const d = R.drive(url) || { tipo: 'link', abrir: url };
     $('#app').innerHTML = `<div class="pt pt-docv">${topo()}
       <div class="ob-topo"><a class="btn icon" href="${volta}" aria-label="Voltar">${icone(IC.esq)}</a>
@@ -517,6 +632,13 @@
     if (a === 'abrir') { e.preventDefault(); if (est.sessao) { location.hash = base() + '/d/' + encodeURIComponent(b.dataset.id); return; } est.aberto = b.dataset.id; history.pushState(null, '', '#/d/' + encodeURIComponent(b.dataset.id)); telaDiario(b.dataset.id); }
     if (a === 'voltar') { e.preventDefault(); if (est.sessao) { location.hash = base(); return; } est.aberto = null; history.pushState(null, '', location.pathname); desenhar(); }
     if (a === 'pdf') { e.preventDefault(); pdf(); }
+    if (a === 'op-rel' || a === 'op-com-imp') {
+      e.preventDefault();
+      const x = abertoAgora(); if (!x || !temPainel(x.s)) return;
+      const P = OP();
+      if (a === 'op-rel') P.imprimir(P.htmlRelatorio({ s: x.s, cliente: x.c.nome, logo: LOGO }), { titulo: `${x.s.codigo ? x.s.codigo + ' - ' : ''}Relatório de avanço - ${dataBR(hojeISO()).replace(/\//g, '-')}`, rodape: P.RODAPE });
+      else { const cm = (x.s.painel.comunicados || []).find((y) => y.id === b.dataset.id); if (cm) P.imprimir(`<div class="oc-imp">${P.htmlComunicado(cm, { cliente: x.c.nome, obra: nomeSv(x.s), codigo: x.s.codigo, logo: LOGO })}</div>`, { titulo: `${x.s.codigo ? x.s.codigo + ' - ' : ''}Comunicado ${P.n3(cm.numero)} - ${cm.titulo}`, rodape: P.RODAPE, margem: '16mm 16mm 18mm 16mm' }); }
+    }
     if (a === 'senha') { e.preventDefault(); modalSenha(); }
     if (a === 'recarregar') { e.preventDefault(); iniciarSessao(est.sessao); }
   });
