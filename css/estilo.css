@@ -1609,6 +1609,18 @@ body.portal{background:var(--bg)}
 .ac-no-ic .ic{width:18px;height:18px;color:var(--muted);display:block}
 .ac-no.pasta .ac-no-ic .ic{color:var(--brand-700)}
 .ac-no.bloq .ac-no-ic .ic{color:var(--warn)}
+.ac-pg{display:flex;flex-direction:column;max-height:52vh;overflow:auto;border:1px solid var(--line-2);border-radius:10px;padding:4px 10px}
+.ac-pg-l{display:flex;align-items:center;gap:9px;padding:8px 0 8px calc(var(--n,0) * 24px);border-bottom:1px solid var(--line-3);cursor:pointer}
+.ac-pg-l:last-child{border-bottom:0}
+.ac-pg-l input{width:18px;height:18px;flex:none;accent-color:var(--brand-700)}
+.ac-pg-l .ic{width:17px;height:17px;flex:none;color:var(--muted)}
+.ac-pg-l span{display:flex;flex-direction:column;min-width:0}
+.ac-pg-l small{color:var(--muted);font-size:12px}
+.ac-pg-l input:disabled+.ic,.ac-pg-l input:disabled~span{opacity:.75}
+.ac-pg-est{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--line-3);font-size:14px}
+.ac-pg-est .ic{width:18px;height:18px;flex:none;margin-top:1px;color:var(--brand-700)}
+.ac-pg-est.ok .ic{color:var(--ok)}
+.ac-pg-est.aviso .ic{color:var(--warn)}
 .ac-no-t{flex:1;min-width:0;display:flex;flex-direction:column}
 .ac-no-t b{font-weight:500;font-size:14px}.ac-no-t a{color:inherit;text-decoration:none}.ac-no-t a:hover b{color:var(--brand-700)}
 .ac-no-t small{color:var(--muted);font-size:12px}
@@ -1669,6 +1681,9 @@ a.ac-renov{text-decoration:none;gap:4px}a.ac-renov .ic{width:13px;height:13px}a.
 .pt-docs li.bloq>div{align-items:flex-start}
 .pt-docs li.bloq>div>.ic{color:var(--warn);margin-top:1px}
 .pt-docs li.bloq small{color:var(--ink-2);max-width:62ch}
+.pt-docs li.bloq .pt-pg{display:block;height:5px;border-radius:3px;background:var(--line-2);margin:8px 0 3px;max-width:220px;overflow:hidden}
+.pt-docs li.bloq .pt-pg i{display:block;height:100%;border-radius:3px;background:var(--ok)}
+.pt-docs li.bloq small.pt-pg-t{color:var(--muted);font-size:12px}
 .pt-ct{margin-bottom:6px}
 .pt-ct .hd .btn{flex:none}
 .pt-ct-k{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}

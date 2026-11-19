@@ -17,7 +17,7 @@
   const cfg = window.SOUZA_CONFIG || {};
   const BASE = String(cfg.rdoUrl || '').replace(/\/+$/, '');
   const CHAVE = cfg.rdoChave || '';
-  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.20`;
+  const LOGO = `${window.SOUZA_RAIZ || '../'}img/logo.png?v=1.4.21`;
   const est = { codigo: '', dados: null, aba: 'diarios', aberto: null, sessao: null, obras: null };
   const guardar = { get() { try { return localStorage.getItem('rdo.portal.codigo') || ''; } catch { return ''; } }, set(v) { try { if (v) localStorage.setItem('rdo.portal.codigo', v); else localStorage.removeItem('rdo.portal.codigo'); } catch { /* sem armazenamento */ } } };
 
@@ -292,8 +292,12 @@
   const baseSv = (c, s) => `#/c/${enc(c.id)}/s/${enc(s.id)}`;
   const nomeSv = (s) => s.titulo || R.tipoDe(s);
   const hojeISO = () => (R.isoData ? R.isoData(new Date()) : new Date().toISOString().slice(0, 10));
-  function linhaNo(n, base) {
-    if (bloqueado(n)) return `<li class="bloq"><div>${icone(IC.cadeado)}<span><b>${esc(n.nome)}</b><small>${esc(n.bloqueio.msg || R.MSG_PRELIMINAR)}</small></span></div></li>`;
+  function linhaNo(n, base, fin) {
+    if (bloqueado(n)) {
+      // travado até o pagamento total: mostra quanto já foi pago
+      const pg = n.bloqueio.pagamento && fin && (fin.parcelas || []).length ? R.resumoFinanceiro(fin) : null;
+      return `<li class="bloq${n.bloqueio.pagamento ? ' pag' : ''}"><div>${icone(IC.cadeado)}<span><b>${esc(n.nome)}</b><small>${esc(n.bloqueio.msg || (n.bloqueio.pagamento ? R.MSG_PAGAMENTO : R.MSG_PRELIMINAR))}</small>${pg ? `<em class="pt-pg"><i style="width:${Math.min(100, pg.pct).toFixed(1)}%"></i></em><small class="pt-pg-t">Pagamento ${Math.floor(pg.pct)}% concluído</small>` : ''}</span></div></li>`;
+    }
     if (!R.temConteudo(n)) return `<li class="elab"><div>${icone(n.tipo === 'pasta' ? IC.pasta : IC.nota)}<span><b>${esc(n.nome)}</b><small>Em elaboração</small></span>${icone(IC.relogio)}</div></li>`;
     if (n.tipo === 'pasta' && !soLink(n)) {
       const k = (n.filhos || []).filter(visivel).length + (n.url ? 1 : 0);
@@ -304,7 +308,7 @@
       ? `<li><a href="${esc(d.abrir)}" target="_blank" rel="noopener">${icone(IC.externo)}<span><b>${esc(n.nome)}</b><small>Abre em outra aba</small></span></a></li>`
       : `<li><a href="${base}/v/${enc(n.id)}">${icone(d.tipo === 'pasta' ? IC.pasta : IC.nota)}<span><b>${esc(n.nome)}</b><small>${d.tipo === 'pasta' ? 'Pasta com arquivos' : 'Documento'}</small></span>${icone(IC.dir)}</a></li>`;
   }
-  const htmlNos = (lista, base) => { const l = (lista || []).filter(visivel); return l.length ? `<ul class="pt-docs">${l.map((n) => linhaNo(n, base)).join('')}</ul>` : ''; };
+  const htmlNos = (lista, base, fin) => { const l = (lista || []).filter(visivel); return l.length ? `<ul class="pt-docs">${l.map((n) => linhaNo(n, base, fin)).join('')}</ul>` : ''; };
   /** Contrato e pagamentos: o link do contrato e as parcelas (copiadas da carteira da Souza). */
   function htmlContrato(c, s) {
     const f = s.financeiro, temF = f && ((f.parcelas || []).length || f.valor);
@@ -431,7 +435,7 @@
     } else if (aba === 'diarios') {
       corpo = '<section class="card"><div class="bd" data-q="diarios"><p class="small muted">Carregando os diários…</p></div></section>';
     } else {
-      const docs = htmlNos(R.estruturaDe(s), base);
+      const docs = htmlNos(R.estruturaDe(s), base, s.financeiro);
       corpo = `<section class="card pt-sv-docs"><div class="bd">${docs || '<p class="small muted">Os documentos da obra aparecem aqui assim que forem liberados.</p>'}</div></section>`;
     }
     $('#app').innerHTML = `<div class="pt pt-area po">${topo()}
@@ -496,7 +500,7 @@
       sub = caminho(s, a.pais);
       volta = a.pais.length ? `${base}/p/${enc(a.pais[a.pais.length - 1].id)}` : temPainel(s) ? `${base}/a/documentos` : base;
     }
-    const docs = htmlNos(lista, base);
+    const docs = htmlNos(lista, base, s.financeiro);
     $('#app').innerHTML = `<div class="pt pt-area">${topo()}
       <div class="ob-topo"><a class="btn icon" href="${volta}" aria-label="Voltar">${icone(IC.esq)}</a>
         <div class="tit"><b>${esc(titulo)}</b><span>${esc(sub)}${pid ? '' : ` · ${esc(c.nome)}`}</span></div>

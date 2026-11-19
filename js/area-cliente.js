@@ -28,7 +28,11 @@
   const cliente = (id) => { const r = id && B.store.get(T, id); return r && r.tipo === 'cliente' ? Object.assign({ id: r.id }, r.dados) : null; };
   const servico = (id) => { const r = id && B.store.get(T, id); return r && r.tipo === 'servico' ? Object.assign({ id: r.id, clienteId: r.grupo }, JSON.parse(JSON.stringify(r.dados)), { estrutura: JSON.parse(JSON.stringify(R.estruturaDe(r.dados))) }) : null; };
   const servicosDe = (cid) => B.store.lista(T, 'servico').filter((r) => r.grupo === cid).map((r) => servico(r.id)).sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
-  function salvarServico(s) { const d = Object.assign({}, s); delete d.id; delete d.clienteId; delete d.itens; B.store.salvar(T, s.id, 'servico', d, s.clienteId); }
+  function salvarServico(s) {
+    const d = Object.assign({}, s); delete d.id; delete d.clienteId; delete d.itens;
+    if (Array.isArray(d.estrutura)) R.aplicarPagamento(d.estrutura, R.quitado(d.financeiro));
+    B.store.salvar(T, s.id, 'servico', d, s.clienteId);
+  }
   const obrasRdo = () => B.store.dados('obras', 'obra').sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
   const rotulo = (c) => `${c.numero ? c.numero + '. ' : ''}${c.nome}`;
 
@@ -124,10 +128,13 @@
     if (!Sis.comercial || !B.conectado || !B.conectado() || B.perfil() !== 'master') return 0;
     let n = 0;
     for (const r of B.store.lista(T, 'servico')) {
-      if (!r.dados.contratoId) continue;
-      const f = finDe(Sis.comercial.servico(r.dados.contratoId));
-      if (JSON.stringify(f) !== JSON.stringify(r.dados.financeiro || null)) {
-        B.store.salvar(T, r.id, 'servico', Object.assign({}, r.dados, { financeiro: f }), r.grupo);
+      const f = r.dados.contratoId ? finDe(Sis.comercial.servico(r.dados.contratoId)) : r.dados.financeiro || null;
+      const mudouFin = JSON.stringify(f) !== JSON.stringify(r.dados.financeiro || null);
+      // o que só sai depois do pagamento total: libera ao quitar, trava de novo se uma parcela voltar a ficar em aberto
+      const est = Array.isArray(r.dados.estrutura) ? JSON.parse(JSON.stringify(r.dados.estrutura)) : null;
+      const mudouTrava = !!est && R.aplicarPagamento(est, R.quitado(f));
+      if (mudouFin || mudouTrava) {
+        B.store.salvar(T, r.id, 'servico', Object.assign({}, r.dados, { financeiro: f }, est ? { estrutura: est } : {}), r.grupo);
         n++;
       }
     }
@@ -288,9 +295,12 @@
 
   /* ---------- árvore (serviço ou modelo) ---------- */
   const descreverNo = (n, modelo) => {
+    const pag = !!(n.bloqueio && n.bloqueio.pagamento);
+    if (pag && modelo) return { txt: 'Só sai depois do pagamento total', cls: 'bloq' };
+    if (pag && n.bloqueio.ativo) return { txt: `Travado até o pagamento total${n.url || R.temConteudo(n) ? '' : ' · ainda sem link'}`, cls: 'bloq' };
     if (n.bloqueio && (modelo || n.bloqueio.ativo)) return { txt: modelo ? 'Começa bloqueado em cada serviço' : 'Bloqueado para o cliente', cls: 'bloq' };
     const k = (n.filhos || []).length, itens = `${k} ${k === 1 ? 'item' : 'itens'}`;
-    if (n.url) { const d = R.drive(n.url); return { txt: (d ? NOME_LINK[d.tipo] : 'Link') + (n.tipo === 'pasta' && k ? ` · mais ${itens}` : ''), cls: 'ok' }; }
+    if (n.url) { const d = R.drive(n.url); return { txt: (d ? NOME_LINK[d.tipo] : 'Link') + (n.tipo === 'pasta' && k ? ` · mais ${itens}` : '') + (pag ? ' · liberado com o pagamento' : ''), cls: 'ok' }; }
     if (n.tipo === 'pasta' && R.temConteudo(n)) return { txt: itens, cls: 'ok' };
     const vazio = n.vazio === 'oculta' ? 'oculta enquanto vazia' : 'aparece "Em elaboração"';
     return { txt: modelo ? (n.tipo === 'pasta' ? `Pasta · ${vazio}` : `Documento · ${vazio}`) : `${n.tipo === 'pasta' ? 'Vazia' : 'Sem link'} · ${vazio}`, cls: 'vazio' };
@@ -303,7 +313,7 @@
         <span class="ac-no-ic">${icone(n.bloqueio && n.bloqueio.ativo ? 'cadeado' : n.tipo === 'pasta' ? 'pasta' : 'nota')}</span>
         <span class="ac-no-t">${n.url ? `<a href="${esc((R.drive(n.url) || {}).abrir || n.url)}" target="_blank" rel="noopener"><b>${esc(n.nome)}</b></a>` : `<b>${esc(n.nome)}</b>`}<small>${esc(dsc.txt)}</small></span>
         <span class="ac-no-a">
-          ${n.bloqueio && !modelo ? `<button class="btn sm ${n.bloqueio.ativo ? '' : 'ghost'}" data-a="ac-no-bloq" ${base}>${n.bloqueio.ativo ? 'Liberar para o cliente' : 'Bloquear de novo'}</button>` : ''}
+          ${n.bloqueio && !modelo && !(n.bloqueio.pagamento && !n.bloqueio.ativo) ? `<button class="btn sm ${n.bloqueio.ativo ? '' : 'ghost'}" data-a="ac-no-bloq" ${base}>${n.bloqueio.pagamento ? 'Liberar agora' : n.bloqueio.ativo ? 'Liberar para o cliente' : 'Bloquear de novo'}</button>` : ''}
           ${!modelo ? `<button class="btn sm ${n.url || (n.tipo === 'pasta' && k) ? 'ghost' : ''}" data-a="ac-no-link" ${base} title="${n.tipo === 'pasta' ? 'Link da pasta no Drive: o cliente abre a pasta direto' : 'Link do arquivo ou da pasta no Drive'}">${n.url ? 'Trocar link' : 'Colar link'}</button>` : ''}
           ${n.tipo === 'pasta' ? `<button class="btn sm ghost" data-a="ac-no-novo" data-t="doc" ${base} title="Documento dentro desta pasta">${icone('mais')}Documento</button><button class="btn sm ghost" data-a="ac-no-novo" data-t="pasta" ${base} title="Pasta dentro desta pasta">${icone('mais')}Pasta</button>` : ''}
           <button class="btn icon sm" data-a="ac-no-mover" data-d="-1" ${base} ${i === 0 ? 'disabled' : ''} aria-label="Subir">${icone('esq')}</button><button class="btn icon sm" data-a="ac-no-mover" data-d="1" ${base} ${i === lista.length - 1 ? 'disabled' : ''} aria-label="Descer">${icone('dir')}</button>
@@ -316,7 +326,7 @@
     const [k, id] = String(ref).split(':');
     if (k === 's') {
       const s = servico(id); if (!s) return null;
-      return { modelo: false, estrutura: s.estrutura, salvar: (e) => { s.estrutura = e; salvarServico(s); } };
+      return { modelo: false, estrutura: s.estrutura, fin: s.financeiro || null, salvar: (e) => { s.estrutura = e; salvarServico(s); } };
     }
     const m = modelo(id); if (!m) return null;
     return { modelo: true, estrutura: JSON.parse(JSON.stringify(m.estrutura || [])), salvar: (e) => salvarModelo(Object.assign({}, m, { estrutura: e })) };
@@ -333,6 +343,8 @@
     const n = achado ? achado.no : { id: R.idNo(), tipo: tipo === 'pasta' ? 'pasta' : 'doc', nome: '', url: '', vazio: 'elaboracao', filhos: tipo === 'pasta' ? [] : undefined };
     const novo = !noId;
     const titulo = novo ? (n.tipo === 'pasta' ? 'Nova pasta' : 'Novo documento') : `Editar "${n.nome}"`;
+    const pagAntes = !!(n.bloqueio && n.bloqueio.pagamento);
+    const msgAntes = n.bloqueio ? n.bloqueio.msg : '';
     ui.abrirModal({
       titulo,
       sub: d.modelo ? (n.tipo === 'pasta' ? 'Pasta: agrupa documentos e outras pastas. Os links são colados em cada serviço.' : 'Posição de documento: o link é colado em cada serviço.')
@@ -341,12 +353,20 @@
         ${!d.modelo ? `<label class="f" style="margin-top:10px"><span>${n.tipo === 'pasta' ? 'Link da pasta no Drive' : 'Link do Drive (arquivo ou pasta)'}: pode ficar em branco por enquanto</span><input class="inp" name="url" value="${esc(n.url || '')}" placeholder="Cole aqui o link copiado no Drive" autocapitalize="off" spellcheck="false"></label><p class="small ac-detec" data-q="detec"></p>` : ''}
         ${`<div class="f" style="margin-top:12px"><span class="small" style="font-weight:500;color:var(--ink-2)">Enquanto estiver vazio</span><div class="ac-vazio">
           <label><input type="radio" name="vazio" value="elaboracao" ${n.vazio !== 'oculta' ? 'checked' : ''}> Aparece "Em elaboração"</label><label><input type="radio" name="vazio" value="oculta" ${n.vazio === 'oculta' ? 'checked' : ''}> Fica oculto</label></div></div>`}
-        ${n.bloqueio && d.modelo ? '<p class="small muted" style="margin:12px 0 0">Em cada serviço novo esta pasta começa bloqueada. Você libera no próprio serviço, quando quiser.</p>' : ''}
-        ${n.bloqueio && !d.modelo ? `<label class="chk" style="margin-top:12px"><input type="checkbox" name="bloq" ${n.bloqueio.ativo ? 'checked' : ''}> <span>Bloqueado para o cliente (os links não saem do sistema)</span></label>` : ''}${n.bloqueio ? `
-          <label class="f" style="margin-top:8px"><span>Mensagem do bloqueio</span><textarea class="inp" name="msg" rows="3">${esc(n.bloqueio.msg || R.MSG_PRELIMINAR)}</textarea></label>` : ''}
+        <label class="chk ac-pag" style="margin-top:12px"><input type="checkbox" name="pag" ${pagAntes ? 'checked' : ''}> <span>Só liberar para o cliente depois do pagamento total do serviço${d.modelo ? '' : ` <small class="muted">(${esc(estadoPag(d.fin))})</small>`}</span></label>
+        <div data-q="manual" ${pagAntes ? 'hidden' : ''}>${n.bloqueio && d.modelo ? '<p class="small muted" style="margin:12px 0 0">Em cada serviço novo esta pasta começa bloqueada. Você libera no próprio serviço, quando quiser.</p>' : ''}
+        ${n.bloqueio && !d.modelo ? `<label class="chk" style="margin-top:12px"><input type="checkbox" name="bloq" ${n.bloqueio.ativo ? 'checked' : ''}> <span>Bloqueado para o cliente (os links não saem do sistema)</span></label>` : ''}</div>
+        <label class="f" style="margin-top:8px" data-q="msgbox" ${n.bloqueio || pagAntes ? '' : 'hidden'}><span>Mensagem que o cliente vê</span><textarea class="inp" name="msg" rows="2">${esc((n.bloqueio && n.bloqueio.msg) || (pagAntes ? R.MSG_PAGAMENTO : R.MSG_PRELIMINAR))}</textarea></label>
         ${!d.modelo ? '<p class="small muted" style="margin:12px 0 0">No Drive: botão direito > Compartilhar > Acesso geral: <b>Qualquer pessoa com o link</b>, como <b>Leitor</b> > Copiar link.</p>' : ''}`,
       aoAbrir: (el) => {
         const u = $('[name=url]', el), det = $('[data-q=detec]', el), nome = $('[name=nome]', el);
+        const pg = $('[name=pag]', el), msg = $('[name=msg]', el);
+        pg.addEventListener('change', () => {
+          $('[data-q=manual]', el).hidden = pg.checked;
+          $('[data-q=msgbox]', el).hidden = !pg.checked && !n.bloqueio;
+          // troca a mensagem padrão junto com o tipo de trava (a que você escreveu fica)
+          if (!msg.value.trim() || msg.value === R.MSG_PAGAMENTO || msg.value === R.MSG_PRELIMINAR) msg.value = pg.checked ? R.MSG_PAGAMENTO : msgAntes && !pagAntes ? msgAntes : R.MSG_PRELIMINAR;
+        });
         if (u && !novo) setTimeout(() => u.focus(), 30);
         if (!u) return;
         const ver = () => {
@@ -371,7 +391,10 @@
           n.nome = v('nome');
           if (!d.modelo) n.url = url;
           const vz = $('[name=vazio]:checked', m.el); if (vz) n.vazio = vz.value;
-          if (n.bloqueio) n.bloqueio = { ativo: d.modelo ? true : !!($('[name=bloq]', m.el) || {}).checked, msg: v('msg') || R.MSG_PRELIMINAR };
+          const pag = $('[name=pag]', m.el).checked;
+          if (pag) n.bloqueio = { pagamento: true, ativo: d.modelo ? true : !R.quitado(d.fin), msg: v('msg') || R.MSG_PAGAMENTO };
+          else if (pagAntes) delete n.bloqueio;
+          else if (n.bloqueio) n.bloqueio = { ativo: d.modelo ? true : !!($('[name=bloq]', m.el) || {}).checked, msg: v('msg') || R.MSG_PRELIMINAR };
           if (novo) {
             if (paiId) { const p = R.acharNo(est, paiId); if (!p) return; (p.no.filhos = p.no.filhos || []).push(n); } else est.push(n);
           }
@@ -380,6 +403,52 @@
       ],
     });
   }
+  /** "Pago R$ x de R$ y (z%)", "Contrato quitado" ou "Sem contrato ligado". */
+  function estadoPag(f) {
+    if (!f) return 'Sem contrato da carteira ligado: fica travado até você liberar';
+    const r = R.resumoFinanceiro(f);
+    if (R.quitado(f)) return 'Contrato quitado';
+    return `Pago ${brl(r.pago)} de ${brl(r.total)} (${Math.round(r.pct)}%)`;
+  }
+  /** Marca, de uma vez, as posições que só saem para o cliente depois do pagamento total. */
+  function modalPagamento(sid) {
+    const s = servico(sid); if (!s) return;
+    const est = JSON.parse(JSON.stringify(s.estrutura || []));
+    const linhas = (l, nivel, travadoPai) => (l || []).map((n) => {
+      const pag = !!(n.bloqueio && n.bloqueio.pagamento), manual = !!(n.bloqueio && !n.bloqueio.pagamento && n.bloqueio.ativo);
+      return `<label class="ac-pg-l" style="--n:${nivel}"><input type="checkbox" data-no="${esc(n.id)}" ${pag || travadoPai ? 'checked' : ''} ${travadoPai ? 'disabled' : ''}>
+        ${icone(n.tipo === 'pasta' ? 'pasta' : 'nota')}<span><b>${esc(n.nome)}</b>${travadoPai ? '<small>Vai junto com a pasta</small>' : manual ? '<small>Já bloqueado à mão</small>' : !n.url && !R.temConteudo(n) ? '<small>Ainda sem link</small>' : ''}</span></label>
+        ${n.tipo === 'pasta' ? linhas(n.filhos, nivel + 1, travadoPai || pag) : ''}`;
+    }).join('');
+    const f = s.financeiro || null;
+    ui.abrirModal({
+      titulo: 'Liberar com o pagamento', sub: 'Marque o que o cliente só recebe depois do pagamento total. Até lá ele vê o item com um cadeado e a mensagem; o link nem sai do sistema. Ao quitar, tudo é liberado sozinho.',
+      corpo: `<p class="ac-pg-est ${R.quitado(f) ? 'ok' : f ? '' : 'aviso'}">${icone(R.quitado(f) ? 'check' : f ? 'info' : 'alerta')}<span>${esc(estadoPag(f))}${f && !R.quitado(f) ? '. Libera quando a última parcela for marcada como paga em Clientes.' : ''}</span></p>
+        <div class="ac-pg">${linhas(est, 0, false)}</div>`,
+      aoAbrir: (el) => el.addEventListener('change', (ev) => {
+        const cb = ev.target.closest('input[data-no]'); if (!cb) return;
+        // pasta marcada leva tudo o que está dentro
+        const a = R.acharNo(est, cb.dataset.no); if (!a || a.no.tipo !== 'pasta') return;
+        const ids = []; const junta = (l) => (l || []).forEach((x) => { ids.push(x.id); junta(x.filhos); }); junta(a.no.filhos);
+        ids.forEach((id) => { const c = $(`input[data-no="${CSS.escape(id)}"]`, el); if (!c) return; c.disabled = cb.checked; if (cb.checked) c.checked = true; const sm = c.parentElement.querySelector('small'); if (cb.checked) { if (sm) sm.textContent = 'Vai junto com a pasta'; else c.parentElement.querySelector('span').insertAdjacentHTML('beforeend', '<small>Vai junto com a pasta</small>'); } else if (sm && sm.textContent === 'Vai junto com a pasta') { sm.remove(); c.checked = false; } });
+      }),
+      botoes: [{ rot: 'Cancelar' }, { rot: 'Salvar', classe: 'primary', acao: (m) => {
+        const pago = R.quitado(f);
+        let k = 0;
+        const aplicar = (l) => (l || []).forEach((n) => {
+          const c = $(`input[data-no="${CSS.escape(n.id)}"]`, m.el);
+          const marcado = c && c.checked && !c.disabled;
+          if (marcado) { if (!(n.bloqueio && n.bloqueio.pagamento)) n.bloqueio = { pagamento: true, ativo: !pago, msg: R.MSG_PAGAMENTO }; k++; }
+          else if (n.bloqueio && n.bloqueio.pagamento) delete n.bloqueio;
+          aplicar(n.filhos);
+        });
+        aplicar(est);
+        s.estrutura = est; salvarServico(s); m.fechar(); Sis.desenhar(true);
+        ui.toast(!k ? 'Nada travado pelo pagamento.' : pago ? `${k} ${k === 1 ? 'item marcado' : 'itens marcados'}. O contrato já está quitado: continuam liberados.` : `${k} ${k === 1 ? 'item só sai' : 'itens só saem'} depois do pagamento total.`);
+      } }],
+    });
+  }
+  A['ac-sv-pag'] = (b) => modalPagamento(b.dataset.id);
   A['ac-no-novo'] = (b) => modalNo(b.dataset.dono, { paiId: b.dataset.no || null, tipo: b.dataset.t });
   A['ac-no-editar'] = (b) => modalNo(b.dataset.dono, { noId: b.dataset.no });
   A['ac-no-link'] = (b) => modalNo(b.dataset.dono, { noId: b.dataset.no });
@@ -394,6 +463,12 @@
   A['ac-no-bloq'] = async (b) => {
     const d = dono(b.dataset.dono); if (!d) return;
     const a = R.acharNo(d.estrutura, b.dataset.no); if (!a || !a.no.bloqueio) return;
+    if (a.no.bloqueio.pagamento) {
+      if (!(await ui.confirmar({ titulo: `Liberar "${a.no.nome}" antes do pagamento total?`, msg: `${estadoPag(d.fin)}. O cliente passa a ver e abrir o que estiver nesta posição agora; ela deixa de esperar o pagamento.`, ok: 'Liberar agora' }))) return;
+      a.no.bloqueio = { ativo: false, msg: a.no.bloqueio.msg };
+      d.salvar(d.estrutura); Sis.desenhar(true); ui.toast('Liberado para o cliente.');
+      return;
+    }
     if (a.no.bloqueio.ativo && !d.modelo && !(await ui.confirmar({ titulo: `Liberar "${a.no.nome}" para o cliente?`, msg: 'O cliente passa a ver e abrir o que estiver nesta posição.', ok: 'Liberar' }))) return;
     a.no.bloqueio.ativo = !a.no.bloqueio.ativo;
     d.salvar(d.estrutura); Sis.desenhar(true);
@@ -449,6 +524,7 @@
       <div class="bd">${htmlFinanceiro(s)}
         ${s.estrutura.length ? `<ul class="ac-arvore">${htmlArvore(s.estrutura, 's:' + s.id, false)}</ul>` : '<p class="small muted">Nenhuma pasta ou documento ainda.</p>'}
         <div class="actions"><button class="btn sm" data-a="ac-no-novo" data-t="doc" data-dono="s:${esc(s.id)}">${icone('mais')}Documento</button><button class="btn sm" data-a="ac-no-novo" data-t="pasta" data-dono="s:${esc(s.id)}">${icone('mais')}Pasta</button>
+          ${s.estrutura.length ? `<button class="btn sm ghost" data-a="ac-sv-pag" data-id="${esc(s.id)}">${icone('cadeado')}Liberar com o pagamento${R.travadosPorPagamento(s.estrutura) ? ` (${R.travadosPorPagamento(s.estrutura)})` : ''}</button>` : ''}
           <button class="btn sm ghost" data-a="ac-sv-modelo" data-id="${esc(s.id)}">${icone('copiar')}Salvar como modelo</button></div></div></section>`;
   }
 

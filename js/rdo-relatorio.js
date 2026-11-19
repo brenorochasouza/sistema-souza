@@ -83,6 +83,20 @@ window.RDO = (function () {
    * bloqueio: { ativo, msg } só no projeto preliminar do AVCB (o link nem sai do banco).
    */
   const MSG_PRELIMINAR = 'O projeto preliminar não é disponibilizado, para evitar que seja utilizado no futuro ou tomado como a versão final do projeto. A versão válida é o projeto aprovado pelo Corpo de Bombeiros.';
+  const MSG_PAGAMENTO = 'Liberado aqui assim que o pagamento do serviço for concluído.';
+  /** Serviço quitado: contrato com parcelas e todas pagas. */
+  const quitado = (f) => { const ps = (f && f.parcelas) || []; return ps.length > 0 && ps.every((x) => x.pago); };
+  /** Trava por pagamento: as posições marcadas ficam bloqueadas (o link nem sai do banco) até o serviço ser quitado.
+      Devolve se mudou alguma. */
+  function aplicarPagamento(lista, pago) {
+    let mudou = false;
+    (lista || []).forEach((n) => {
+      if (n.bloqueio && n.bloqueio.pagamento && n.bloqueio.ativo !== !pago) { n.bloqueio.ativo = !pago; mudou = true; }
+      if (n.filhos && aplicarPagamento(n.filhos, pago)) mudou = true;
+    });
+    return mudou;
+  }
+  const travadosPorPagamento = (lista) => (lista || []).reduce((t, n) => t + (n.bloqueio && n.bloqueio.pagamento ? 1 : 0) + travadosPorPagamento(n.filhos), 0);
   const noDoc = (nome, o) => Object.assign({ tipo: 'doc', nome, url: '', vazio: 'elaboracao' }, o || {});
   const noPasta = (nome, o) => Object.assign({ tipo: 'pasta', nome, vazio: 'elaboracao', filhos: [] }, o || {});
   const MODELOS = {
@@ -386,7 +400,7 @@ window.RDO = (function () {
   return {
     ajustarZoom,
     esc, dataBR, deISO, isoData, somaDias, difDias, diaSemana, dataHora, num, fmtPct, dias,
-    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, tipoDe, OFERTAS, vencimento, situacaoVenc, linkWhats, MODELOS, MSG_PRELIMINAR, copiarEstrutura, estruturaDe, temConteudo, acharNo, idNo, resumoFinanceiro, GRUPOS_PADRAO, nomeDe, iconeTempo,
+    TEMPOS, CHUVA, CONDICOES, PERIODOS, OCORRENCIAS, IMPACTOS, PAPEIS, STATUS, statusDe, drive, TIPOS_SERVICO, nomeTipo, tipoDe, OFERTAS, vencimento, situacaoVenc, linkWhats, MODELOS, MSG_PRELIMINAR, MSG_PAGAMENTO, quitado, aplicarPagamento, travadosPorPagamento, copiarEstrutura, estruturaDe, temConteudo, acharNo, idNo, resumoFinanceiro, GRUPOS_PADRAO, nomeDe, iconeTempo,
     servicos, rotServ, rotEtapa, statusPct, ordemDiario, horas, fmtHoras, horario,
     progresso, prazo, dataRef, choveu, impraticavel, totalMao, aprovacao, impactoTxt, diarioHTML,
   };

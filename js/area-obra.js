@@ -497,7 +497,8 @@
           ${difCart !== null ? `<p class="op-alerta" style="margin:10px 0 0">${icone('info')}<span>Na carteira o contrato está com ${brl(difCart)}; a planilha com os aditivos soma ${brl(fin.total)}. O cliente vê o percentual pago sobre ${brl(fin.total)}.</span></p>` : ''}</div></section>
         <section class="card"><div class="hd"><div><h3>Documentos da obra</h3><p>Os links do Drive que a gestão vê.</p></div></div><div class="bd">
           ${s.estrutura.length ? `<ul class="ac-arvore">${AC().htmlArvore(s.estrutura, 's:' + s.id, false)}</ul>` : '<p class="small muted">Nenhuma pasta ou documento ainda.</p>'}
-          <div class="actions"><button class="btn sm" data-a="ac-no-novo" data-t="doc" data-dono="s:${esc(s.id)}">${icone('mais')}Documento</button><button class="btn sm" data-a="ac-no-novo" data-t="pasta" data-dono="s:${esc(s.id)}">${icone('mais')}Pasta</button></div></div></section>
+          <div class="actions"><button class="btn sm" data-a="ac-no-novo" data-t="doc" data-dono="s:${esc(s.id)}">${icone('mais')}Documento</button><button class="btn sm" data-a="ac-no-novo" data-t="pasta" data-dono="s:${esc(s.id)}">${icone('mais')}Pasta</button>
+            ${s.estrutura.length ? `<button class="btn sm ghost" data-a="ac-sv-pag" data-id="${esc(s.id)}">${icone('cadeado')}Liberar com o pagamento${R.travadosPorPagamento(s.estrutura) ? ` (${R.travadosPorPagamento(s.estrutura)})` : ''}</button>` : ''}</div></div></section>
       </div></div>`;
     P.ligar(el);
   }
